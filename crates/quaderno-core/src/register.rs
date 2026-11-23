@@ -1,0 +1,156 @@
+//! Pairing ("registration") of this client with a device.
+//!
+//! The exchange runs over plain HTTP on port 8080:
+//!
+//! 1. `PUT  /register/cleanup`
+//! 2. `POST /register/pin`   → M1 `{a: N1, b: MAC, c: YB}` (device shows an 8-digit PIN)
+//! 3. `POST /register/hash`  ← M2 `{a: N1, b: N2, c: MAC, d: YA, e: HMAC}` → M3 `{a: N2, b: eHash, e: HMAC}`
+//! 4. `POST /register/ca`    ← M4 `{a: N1, b: rHash, d: wrap(RS), e: HMAC}` → M5 `{a: N2, d: wrap(ES||cert), e: HMAC}`
+//! 5. `POST /register`       ← M6 `{a: N1, d: wrap(client_id||pubkey), e: HMAC}`
+//! 6. `PUT  /register/cleanup`
+//!
+//! Steps 1–3 run in [`Registration::start`]; the remaining steps run in
+//! [`Registration::finish`] once the user has typed the PIN shown on screen.
+
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
+use reqwest::blocking::Client;
+use rsa::pkcs8::{EncodePublicKey, LineEnding};
+use rsa::RsaPrivateKey;
+use serde::Deserialize;
+use serde_json::json;
+
+use crate::address::DeviceAddress;
+use crate::credentials::Credentials;
+use crate::crypto::{normalize_dh, random_bytes, DiffieHellman, SessionKeys, DH_LEN};
+use crate::error::{Error, Result};
+use crate::http::{build_client, check, http_url};
+
+#[derive(Deserialize)]
+struct Msg {
+    #[serde(default)]
+    a: Option<String>,
+    #[serde(default)]
+    b: Option<String>,
+    #[serde(default)]
+    c: Option<String>,
+    #[serde(default)]
+    d: Option<String>,
+    #[serde(default)]
+    e: Option<String>,
+}
+
+fn field(v: &Option<String>, name: &str) -> Result<Vec<u8>> {
+    let s = v.as_deref().ok_or_else(|| Error::Registration(format!("応答にフィールド {name} がありません")))?;
+    B64.decode(s).map_err(|_| Error::Registration(format!("フィールド {name} の Base64 が不正です")))
+}
+
+fn b64(data: &[u8]) -> String {
+    B64.encode(data)
+}
+
+/// A pairing in progress: the device is displaying its PIN.
+pub struct Registration {
+    http: Client,
+    keys: SessionKeys,
+    n1: Vec<u8>,
+    n2: [u8; 16],
+    ya: Vec<u8>,
+    yb: [u8; DH_LEN],
+    e_hash: Vec<u8>,
+    m3_hmac: Vec<u8>,
+}
+
+impl Registration {
+    /// Runs the first half of the exchange. Afterwards the device shows a PIN.
+    pub fn start(addr: &DeviceAddress) -> Result<Self> {
+        let http = build_client(addr, Some(std::time::Duration::from_secs(30)))?;
+        check(http.put(http_url("/register/cleanup")).send()?)?;
+
+        let m1: Msg = check(http.post(http_url("/register/pin")).send()?)?.json()?;
+        let n1 = field(&m1.a, "a")?;
+        let mac = field(&m1.b, "b")?;
+        let yb = normalize_dh(&field(&m1.c, "c")?)?;
+
+        let n2: [u8; 16] = random_bytes();
+        let dh = DiffieHellman::new();
+        let mut ya = vec![0u8];
+        ya.extend_from_slice(&dh.public_key());
+        let zz = dh.shared_secret(&yb)?;
+
+        let salt = [n1.as_slice(), &mac, &n2].concat();
+        let keys = SessionKeys::derive(&zz, &salt);
+
+        let m2_hmac = keys.hmac(&[&n1, &mac, &yb, &n1, &n2, &mac, &ya]);
+        let m2 = json!({
+            "a": b64(&n1), "b": b64(&n2), "c": b64(&mac), "d": b64(&ya), "e": b64(&m2_hmac),
+        });
+        let m3: Msg = check(http.post(http_url("/register/hash")).json(&m2).send()?)?.json()?;
+        if field(&m3.a, "a")? != n2 {
+            return Err(Error::Registration("ノンス N2 が一致しません".into()));
+        }
+        let e_hash = field(&m3.b, "b")?;
+        let m3_hmac = field(&m3.e, "e")?;
+        if keys.hmac(&[&n1, &n2, &mac, &ya, &m2_hmac, &n2, &e_hash])[..] != m3_hmac[..] {
+            return Err(Error::Registration("M3 の HMAC が一致しません".into()));
+        }
+
+        Ok(Self { http, keys, n1, n2, ya, yb, e_hash, m3_hmac })
+    }
+
+    /// Completes the exchange with the PIN shown on the device and returns new credentials.
+    pub fn finish(self, pin: &str) -> Result<Credentials> {
+        let result = self.finish_inner(pin.trim());
+        // Always leave the device in a clean state.
+        let _ = self.http.put(http_url("/register/cleanup")).send();
+        result
+    }
+
+    fn finish_inner(&self, pin: &str) -> Result<Credentials> {
+        let Self { http, keys, n1, n2, ya, yb, e_hash, m3_hmac } = self;
+
+        let psk = keys.hmac(&[pin.as_bytes()]);
+        let rs: [u8; 16] = random_bytes();
+        let r_hash = keys.hmac(&[&rs, &psk, yb, ya]);
+        let wrapped_rs = keys.wrap(&rs);
+        let m4_hmac = keys.hmac(&[n2, e_hash, m3_hmac, n1, &r_hash, &wrapped_rs]);
+        let m4 = json!({
+            "a": b64(n1), "b": b64(&r_hash), "d": b64(&wrapped_rs), "e": b64(&m4_hmac),
+        });
+        let resp = http.post(http_url("/register/ca")).json(&m4).send()?;
+        let m5: Msg =
+            check(resp).map_err(|e| Error::Registration(format!("PIN が正しくない可能性があります ({e})")))?.json()?;
+        if field(&m5.a, "a")? != n2 {
+            return Err(Error::Registration("ノンス N2 が一致しません".into()));
+        }
+        let wrapped_es_cert = field(&m5.d, "d")?;
+        let m5_hmac = field(&m5.e, "e")?;
+        if keys.hmac(&[n1, &r_hash, &wrapped_rs, &m4_hmac, n2, &wrapped_es_cert])[..] != m5_hmac[..] {
+            return Err(Error::Registration("M5 の HMAC が一致しません".into()));
+        }
+        let es_cert = keys.unwrap(&wrapped_es_cert)?;
+        if es_cert.len() < 16 {
+            return Err(Error::Registration("証明書データが短すぎます".into()));
+        }
+        let (es, cert) = es_cert.split_at(16);
+        if keys.hmac(&[es, &psk, yb, ya])[..] != e_hash[..] {
+            return Err(Error::Registration("PIN が正しくありません".into()));
+        }
+
+        let private_key = RsaPrivateKey::new(&mut rand::thread_rng(), 2048)
+            .map_err(|e| Error::Registration(format!("RSA 鍵の生成に失敗しました: {e}")))?;
+        let public_pem = private_key
+            .to_public_key()
+            .to_public_key_pem(LineEnding::LF)
+            .map_err(|e| Error::Registration(e.to_string()))?;
+        let public_pem = public_pem.trim_end();
+        let client_id = uuid::Uuid::new_v4().to_string();
+
+        let wrapped_did = keys.wrap(&[client_id.as_bytes(), public_pem.as_bytes()].concat());
+        let m6_hmac = keys.hmac(&[n2, &wrapped_es_cert, &m5_hmac, n1, &wrapped_did]);
+        let m6 = json!({ "a": b64(n1), "d": b64(&wrapped_did), "e": b64(&m6_hmac) });
+        check(http.post(http_url("/register")).json(&m6).send()?)?;
+
+        Ok(Credentials { client_id, private_key, certificate: Some(String::from_utf8_lossy(cert).into_owned()) })
+    }
+}

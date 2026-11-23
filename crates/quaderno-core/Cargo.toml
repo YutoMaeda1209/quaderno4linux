@@ -1,0 +1,30 @@
+[package]
+name = "quaderno-core"
+description = "Protocol library for Fujitsu Quaderno / Sony DPT e-paper devices"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "native-tls"] }
+num-bigint = { version = "0.4", features = ["rand"] }
+rand = "0.8"
+sha2 = "0.10"
+hmac = "0.12"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+rsa = { version = "0.9", features = ["sha2", "pem"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+urlencoding = "2"
+dirs = "6"
+socket2 = { version = "0.5", features = ["all"] }
+nix = { version = "0.29", features = ["term", "fs", "net", "poll"] }
+
+[dev-dependencies]
+tempfile = "3"
