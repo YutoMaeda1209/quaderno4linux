@@ -8,23 +8,4 @@ services:
         source: "../"
         target: "/workspace"
         consistency: cached
-      # Cargo caches survive container rebuilds.
-      - cargo-registry:/usr/local/cargo/registry
-      - cargo-git:/usr/local/cargo/git
-      # Show the GUI on the host's X11 / XWayland server (run `xhost +local:` on the host).
-      - type: bind
-        source: /tmp/.X11-unix
-        target: /tmp/.X11-unix
-    environment:
-      DISPLAY: "${DISPLAY:-:0}"
-    # GPU access for GPUI's Vulkan renderer (falls back to llvmpipe without it).
-    devices:
-      - /dev/dri:/dev/dri
-    # Host networking lets the app see the Quaderno's USB Ethernet interface and
-    # Wi-Fi mDNS announcements on the LAN.
-    network_mode: host
     command: sleep infinity
-
-volumes:
-  cargo-registry:
-  cargo-git:
