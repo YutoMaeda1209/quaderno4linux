@@ -1,0 +1,637 @@
+//! Main window: connection management and layout.
+
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Context as _;
+use gpui::{
+    div, prelude::*, px, ClickEvent, Context, Entity, FocusHandle, SharedString, UniformListScrollHandle, Window,
+};
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::input::{Input, InputState};
+use gpui_component::progress::Progress;
+use gpui_component::spinner::Spinner;
+use gpui_component::{h_flex, v_flex, ActiveTheme, Disableable, IconName, Root, Sizable, TitleBar};
+use quaderno_core::usb::UsbNetMode;
+use quaderno_core::{
+    format_size, usb, CredentialStore, Credentials, DeviceAddress, DeviceClient, DiscoveredDevice, Entry, Error,
+    Registration, ROOT_FOLDER_ID,
+};
+
+use crate::tasks::TaskProgress;
+
+pub const CONTEXT: &str = "QuadernoApp";
+
+pub mod actions {
+    gpui::actions!(
+        quaderno,
+        [
+            Refresh,
+            GoUp,
+            OpenSelected,
+            DeleteSelected,
+            RenameSelected,
+            CopySelected,
+            CutSelected,
+            Paste,
+            SelectAll,
+            SelectPrev,
+            SelectNext,
+            ClearSelection,
+            NewFolder,
+            Upload,
+            Download,
+            Quit
+        ]
+    );
+}
+
+/// State of the device connection.
+pub enum Connection {
+    Disconnected,
+    Connected { client: Arc<DeviceClient>, name: String, status: String },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardMode {
+    Copy,
+    Cut,
+}
+
+pub struct Clipboard {
+    pub mode: ClipboardMode,
+    pub entries: Vec<Entry>,
+    pub source_folder: String,
+}
+
+pub struct QuadernoApp {
+    pub focus_handle: FocusHandle,
+    pub store: CredentialStore,
+    pub credentials: Option<Credentials>,
+    pub address_input: Entity<InputState>,
+    pub devices: Vec<DiscoveredDevice>,
+    pub usb_state: usb::UsbState,
+    pub usb_mode: UsbNetMode,
+    pub connection: Connection,
+
+    /// Breadcrumb: `(folder id, folder name)`, starting with the root.
+    pub path: Vec<(String, String)>,
+    pub entries: Vec<Entry>,
+    pub selection: HashSet<String>,
+    pub anchor: Option<usize>,
+    pub cursor: Option<usize>,
+    pub clipboard: Option<Clipboard>,
+    pub list_scroll: UniformListScrollHandle,
+
+    pub busy: Option<TaskProgress>,
+    pub log: Vec<String>,
+}
+
+impl QuadernoApp {
+    pub fn new(initial_address: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let store = CredentialStore::default_location();
+        let mut log = Vec::new();
+        let credentials = match store.load() {
+            Ok(c) => c,
+            Err(e) => {
+                log.push(format!("認証情報を読み込めません: {e}"));
+                None
+            }
+        };
+        let address_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("IP アドレス (例: 192.168.0.20, fe80::1%usb0)"));
+        let mut this = Self {
+            focus_handle: cx.focus_handle(),
+            store,
+            credentials,
+            address_input,
+            devices: Vec::new(),
+            usb_state: usb::scan(),
+            usb_mode: UsbNetMode::Rndis,
+            connection: Connection::Disconnected,
+            path: vec![(ROOT_FOLDER_ID.into(), "Document".into())],
+            entries: Vec::new(),
+            selection: HashSet::new(),
+            anchor: None,
+            cursor: None,
+            clipboard: None,
+            list_scroll: UniformListScrollHandle::new(),
+            busy: None,
+            log,
+        };
+        this.push_log(match &this.credentials {
+            Some(c) => format!("クライアント ID: {}", c.client_id),
+            None => "未ペアリングです。端末に接続するとペアリングを開始します".into(),
+        });
+        // Dialogs and notifications need the window's `Root`, which exists only
+        // after this view has been constructed.
+        cx.defer_in(window, move |this, window, cx| match initial_address {
+            Some(addr) => {
+                this.address_input.update(cx, |s, cx| s.set_value(addr, window, cx));
+                this.connect_from_input(window, cx);
+            }
+            None => this.discover(window, cx),
+        });
+        this
+    }
+
+    pub fn push_log(&mut self, line: impl Into<String>) {
+        self.log.push(line.into());
+        if self.log.len() > 200 {
+            self.log.remove(0);
+        }
+    }
+
+    pub fn client(&self) -> Option<Arc<DeviceClient>> {
+        match &self.connection {
+            Connection::Connected { client, .. } => Some(client.clone()),
+            Connection::Disconnected => None,
+        }
+    }
+
+    pub fn current_folder(&self) -> String {
+        self.path.last().map(|(id, _)| id.clone()).unwrap_or_else(|| ROOT_FOLDER_ID.into())
+    }
+
+    // ----- discovery & connection --------------------------------------
+
+    /// Searches for devices over USB and the network.
+    pub fn discover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_task(
+            "端末を検索しています",
+            window,
+            cx,
+            |_| Ok((usb::scan(), quaderno_core::discover(Duration::from_millis(2500)))),
+            |this, result, window, cx| match result {
+                Ok((usb_state, devices)) => {
+                    this.usb_state = usb_state;
+                    this.devices = devices;
+                    if this.devices.is_empty() {
+                        this.push_log("端末が見つかりませんでした");
+                    } else {
+                        this.push_log(format!("{} 台の端末が見つかりました", this.devices.len()));
+                        if let Some(first) = this.devices.first() {
+                            let addr = first.address.to_string();
+                            this.address_input.update(cx, |s, cx| s.set_value(addr, window, cx));
+                        }
+                    }
+                }
+                Err(e) => this.notify_error(format!("検索に失敗しました: {e:#}"), window, cx),
+            },
+        );
+    }
+
+    /// Switches a USB-attached device to USB Ethernet mode, finds it and connects.
+    pub fn connect_usb(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mode = self.usb_mode;
+        self.run_task(
+            "USB で接続しています",
+            window,
+            cx,
+            move |progress| {
+                progress.set_detail("USB Ethernet モードに切り替えています");
+                let ifaces = usb::ensure_ethernet(mode, Duration::from_secs(15))?;
+                if let Some(down) = ifaces.iter().find(|i| !i.up) {
+                    anyhow::bail!(
+                        "インターフェース {} が無効になっています。NetworkManager で有効にするか `sudo ip link set {} up` を実行してください",
+                        down.name,
+                        down.name
+                    );
+                }
+                progress.set_detail("端末を探しています");
+                // The link-local address needs a moment (DAD) after the interface comes up.
+                for _ in 0..6 {
+                    let found: Vec<_> =
+                        quaderno_core::discover(Duration::from_millis(1500)).into_iter().filter(|d| d.usb).collect();
+                    if !found.is_empty() {
+                        return Ok(found);
+                    }
+                }
+                anyhow::bail!(
+                    "USB インターフェース ({}) 上で端末が応答しません",
+                    ifaces.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ")
+                )
+            },
+            |this, result, window, cx| match result {
+                Ok(found) => {
+                    let addr = found[0].address;
+                    for d in found {
+                        if !this.devices.iter().any(|x| x.address == d.address) {
+                            this.devices.insert(0, d);
+                        }
+                    }
+                    this.usb_state = usb::scan();
+                    let text = addr.to_string();
+                    this.address_input.update(cx, |s, cx| s.set_value(text, window, cx));
+                    this.connect_to(addr, window, cx);
+                }
+                Err(e) => {
+                    this.usb_state = usb::scan();
+                    this.notify_error(format!("USB 接続に失敗しました: {e:#}"), window, cx);
+                }
+            },
+        );
+    }
+
+    /// Connects to the address in the address field.
+    pub fn connect_from_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.address_input.read(cx).value().to_string();
+        match DeviceAddress::parse(&text) {
+            Ok(addr) => self.connect_to(addr, window, cx),
+            Err(e) => self.notify_error(e.to_string(), window, cx),
+        }
+    }
+
+    pub fn connect_to(&mut self, addr: DeviceAddress, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(credentials) = self.credentials.clone() else {
+            self.confirm(
+                "ペアリング",
+                "このアプリはまだ端末に登録されていません。ペアリングを開始しますか？\n端末の画面に表示される PIN を入力します。",
+                "ペアリング",
+                false,
+                window,
+                cx,
+                move |this, window, cx| this.start_pairing(addr, window, cx),
+            );
+            return;
+        };
+        self.run_task(
+            format!("{addr} に接続しています"),
+            window,
+            cx,
+            move |_| {
+                let info = quaderno_core::device_information(&addr, Duration::from_secs(5)).ok();
+                let client = DeviceClient::connect(addr, credentials)?;
+                let name = info.map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
+                let status = device_status(&client);
+                let entries = client.list_root()?;
+                Ok((Arc::new(client), name, status, entries))
+            },
+            move |this, result, window, cx| match result {
+                Ok((client, name, status, entries)) => {
+                    this.push_log(format!("{name} に接続しました ({addr})"));
+                    this.connection = Connection::Connected { client, name, status };
+                    this.path.truncate(1);
+                    this.set_entries(entries);
+                    window.focus(&this.focus_handle);
+                }
+                Err(e) => {
+                    if matches!(e.downcast_ref::<Error>(), Some(Error::Auth(_))) {
+                        let msg = format!("{e}\n端末とペアリングし直しますか？");
+                        this.confirm(
+                            "認証に失敗しました",
+                            msg,
+                            "ペアリング",
+                            false,
+                            window,
+                            cx,
+                            move |this, window, cx| this.start_pairing(addr, window, cx),
+                        );
+                    } else {
+                        this.notify_error(format!("接続に失敗しました: {e:#}"), window, cx);
+                    }
+                }
+            },
+        );
+    }
+
+    pub fn disconnect(&mut self, cx: &mut Context<Self>) {
+        self.connection = Connection::Disconnected;
+        self.entries.clear();
+        self.selection.clear();
+        self.path.truncate(1);
+        self.push_log("切断しました");
+        cx.notify();
+    }
+
+    /// Pairing step 1: the device shows a PIN, then we ask the user for it.
+    pub fn start_pairing(&mut self, addr: DeviceAddress, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_task(
+            "ペアリングを開始しています",
+            window,
+            cx,
+            move |_| Ok(Registration::start(&addr)?),
+            move |this, result, window, cx| match result {
+                Ok(registration) => {
+                    let registration = Arc::new(std::sync::Mutex::new(Some(registration)));
+                    this.prompt_text(
+                        "ペアリング",
+                        "端末の画面に表示されている 8 桁の PIN を入力してください",
+                        "",
+                        "登録",
+                        window,
+                        cx,
+                        move |this, pin, window, cx| {
+                            if let Some(reg) = registration.lock().unwrap().take() {
+                                this.finish_pairing(addr, reg, pin, window, cx);
+                            }
+                        },
+                    );
+                }
+                Err(e) => this.notify_error(format!("ペアリングを開始できません: {e:#}"), window, cx),
+            },
+        );
+    }
+
+    fn finish_pairing(
+        &mut self,
+        addr: DeviceAddress,
+        registration: Registration,
+        pin: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let store = self.store.clone();
+        self.run_task(
+            "端末に登録しています",
+            window,
+            cx,
+            move |progress| {
+                progress.set_detail("鍵を生成しています");
+                let creds = registration.finish(&pin)?;
+                store.save(&creds).context("認証情報の保存に失敗しました")?;
+                Ok(creds)
+            },
+            move |this, result, window, cx| match result {
+                Ok(creds) => {
+                    this.credentials = Some(creds);
+                    this.notify_success("ペアリングが完了しました", window, cx);
+                    this.connect_to(addr, window, cx);
+                }
+                Err(e) => this.notify_error(format!("ペアリングに失敗しました: {e:#}"), window, cx),
+            },
+        );
+    }
+
+    // ----- rendering ----------------------------------------------------
+
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let busy = self.busy.is_some();
+        let connected = matches!(self.connection, Connection::Connected { .. });
+
+        let usb_summary: SharedString = if !self.usb_state.interfaces.is_empty() {
+            format!(
+                "USB Ethernet: {}",
+                self.usb_state
+                    .interfaces
+                    .iter()
+                    .map(|i| format!("{}{}", i.name, if i.up { "" } else { " (無効)" }))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into()
+        } else if !self.usb_state.serial_ports.is_empty() {
+            format!("USB シリアル: {}", self.usb_state.serial_ports[0].display()).into()
+        } else {
+            "USB: 未検出".into()
+        };
+
+        let devices = self.devices.iter().enumerate().map(|(i, d)| {
+            let addr = d.address;
+            let label = d.info.as_ref().map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
+            let via = if d.usb { "USB" } else { "Wi-Fi / LAN" };
+            div()
+                .id(("device", i))
+                .px_2()
+                .py_1()
+                .rounded(theme.radius)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.list_hover))
+                .child(div().text_sm().child(label))
+                .child(div().text_xs().text_color(theme.muted_foreground).child(format!("{via} · {addr}")))
+                .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                    let text = addr.to_string();
+                    this.address_input.update(cx, |s, cx| s.set_value(text, window, cx));
+                    if is_double_click(ev) {
+                        this.connect_to(addr, window, cx);
+                    }
+                }))
+        });
+
+        let connection_box = match &self.connection {
+            Connection::Connected { name, status, .. } => v_flex()
+                .gap_1()
+                .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(name.clone()))
+                .child(div().text_xs().text_color(theme.muted_foreground).child(status.clone()))
+                .child(
+                    Button::new("disconnect")
+                        .label("切断")
+                        .small()
+                        .outline()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx))),
+                ),
+            Connection::Disconnected => {
+                v_flex().child(div().text_sm().text_color(theme.muted_foreground).child("未接続"))
+            }
+        };
+
+        v_flex()
+            .w(px(280.))
+            .h_full()
+            .flex_shrink_0()
+            .border_r_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .p_3()
+            .gap_3()
+            .child(section_title("接続", cx))
+            .child(connection_box)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("connect-usb")
+                            .label("USB で接続")
+                            .icon(IconName::ArrowRight)
+                            .primary()
+                            .small()
+                            .disabled(busy || connected)
+                            .on_click(cx.listener(|this, _, window, cx| this.connect_usb(window, cx))),
+                    )
+                    .child(
+                        Button::new("usb-mode")
+                            .label(match self.usb_mode {
+                                UsbNetMode::Rndis => "RNDIS",
+                                UsbNetMode::CdcEcm => "CDC-ECM",
+                            })
+                            .tooltip("USB Ethernet の方式 (通常は RNDIS)")
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.usb_mode = match this.usb_mode {
+                                    UsbNetMode::Rndis => UsbNetMode::CdcEcm,
+                                    UsbNetMode::CdcEcm => UsbNetMode::Rndis,
+                                };
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(div().text_xs().text_color(theme.muted_foreground).child(usb_summary))
+            .child(section_title("Wi-Fi / 手動接続", cx))
+            .child(Input::new(&self.address_input).small().disabled(busy || connected))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("connect-addr")
+                            .label("接続")
+                            .small()
+                            .disabled(busy || connected)
+                            .on_click(cx.listener(|this, _, window, cx| this.connect_from_input(window, cx))),
+                    )
+                    .child(
+                        Button::new("discover")
+                            .label("端末を検索")
+                            .icon(IconName::Search)
+                            .small()
+                            .outline()
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| this.discover(window, cx))),
+                    ),
+            )
+            .child(section_title("見つかった端末", cx))
+            .child(
+                v_flex()
+                    .id("devices")
+                    .gap_1()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .when(self.devices.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("端末が見つかりません。Wi-Fi の場合は端末と同じネットワークに接続してください"),
+                        )
+                    })
+                    .children(devices),
+            )
+            .child(section_title("ペアリング", cx))
+            .child(div().text_xs().text_color(theme.muted_foreground).child(match &self.credentials {
+                Some(c) => format!("登録済みクライアント: {}", short_id(&c.client_id)),
+                None => "未登録".into(),
+            }))
+            .child(Button::new("pair").label("ペアリングし直す").small().ghost().disabled(busy).on_click(cx.listener(
+                |this, _, window, cx| {
+                    let text = this.address_input.read(cx).value().to_string();
+                    match DeviceAddress::parse(&text) {
+                        Ok(addr) => this.start_pairing(addr, window, cx),
+                        Err(e) => this.notify_error(format!("{e} (先に端末のアドレスを指定してください)"), window, cx),
+                    }
+                },
+            )))
+    }
+
+    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let mut bar = h_flex()
+            .h(px(30.))
+            .px_3()
+            .gap_3()
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(theme.border)
+            .bg(theme.title_bar)
+            .text_xs()
+            .text_color(theme.muted_foreground);
+        if let Some(busy) = &self.busy {
+            let s = busy.snapshot();
+            let mut text = s.label.clone();
+            if !s.detail.is_empty() {
+                text = format!("{text}: {}", s.detail);
+            }
+            if s.total > 0 {
+                text = format!("{text} ({} / {})", format_size(s.done), format_size(s.total));
+            }
+            bar = bar.child(Spinner::new().small()).child(div().flex_1().truncate().child(text));
+            if let Some(p) = busy.percent() {
+                bar = bar.child(div().w(px(160.)).child(Progress::new().value(p)));
+            }
+        } else {
+            let last = self.log.last().cloned().unwrap_or_default();
+            bar = bar.child(div().flex_1().truncate().child(last));
+            if let Some(clip) = &self.clipboard {
+                let verb = if clip.mode == ClipboardMode::Copy { "コピー" } else { "切り取り" };
+                bar = bar.child(format!("クリップボード: {} 件 ({verb})", clip.entries.len()));
+            }
+        }
+        bar
+    }
+}
+
+fn section_title(text: &'static str, cx: &App) -> impl IntoElement {
+    div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).text_color(cx.theme().muted_foreground).child(text)
+}
+
+use gpui::App;
+
+pub fn is_double_click(ev: &ClickEvent) -> bool {
+    matches!(ev, ClickEvent::Mouse(m) if m.up.click_count >= 2)
+}
+
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect::<String>() + "…"
+}
+
+/// Battery / storage summary for the sidebar.
+pub fn device_status(client: &DeviceClient) -> String {
+    let mut parts = Vec::new();
+    if let Ok(b) = client.battery() {
+        if let Some(level) = b.level {
+            let plugged = b.plugged.as_deref().is_some_and(|p| p != "not_plugged" && p != "false");
+            parts.push(format!("バッテリー {level}%{}", if plugged { " (充電中)" } else { "" }));
+        }
+    }
+    if let Ok(s) = client.storage() {
+        if let (Some(avail), Some(cap)) = (s.available, s.capacity) {
+            parts.push(format!("空き {} / {}", format_size(avail), format_size(cap)));
+        }
+    }
+    if let Ok(v) = client.firmware_version() {
+        parts.push(format!("FW {v}"));
+    }
+    parts.join(" · ")
+}
+
+impl Render for QuadernoApp {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dialog_layer = Root::render_dialog_layer(window, cx);
+        let notification_layer = Root::render_notification_layer(window, cx);
+        let sidebar = self.render_sidebar(cx);
+        let explorer = self.render_explorer(window, cx);
+        let status = self.render_status_bar(cx);
+
+        v_flex()
+            .id("quaderno-app")
+            .key_context(CONTEXT)
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .on_action(cx.listener(Self::on_refresh))
+            .on_action(cx.listener(Self::on_go_up))
+            .on_action(cx.listener(Self::on_open_selected))
+            .on_action(cx.listener(Self::on_delete_selected))
+            .on_action(cx.listener(Self::on_rename_selected))
+            .on_action(cx.listener(Self::on_copy_selected))
+            .on_action(cx.listener(Self::on_cut_selected))
+            .on_action(cx.listener(Self::on_paste))
+            .on_action(cx.listener(Self::on_select_all))
+            .on_action(cx.listener(Self::on_select_prev))
+            .on_action(cx.listener(Self::on_select_next))
+            .on_action(cx.listener(Self::on_clear_selection))
+            .on_action(cx.listener(Self::on_new_folder))
+            .on_action(cx.listener(Self::on_upload))
+            .on_action(cx.listener(Self::on_download))
+            .child(TitleBar::new().child(
+                h_flex().gap_2().child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child("Quaderno4Linux")),
+            ))
+            .child(h_flex().flex_1().min_h_0().child(sidebar).child(explorer))
+            .child(status)
+            .children(dialog_layer)
+            .children(notification_layer)
+    }
+}
