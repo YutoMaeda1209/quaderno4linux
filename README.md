@@ -88,12 +88,9 @@ sudo udevadm control --reload && sudo udevadm trigger
 
 ### DevContainer
 
-VS Code の Dev Containers 拡張で開くと、Rust と GPUI のビルドに必要なライブラリ一式がそろった環境 (Debian trixie) が起動します。
-
-- GUI はホストの X11 / XWayland に表示されます (`/tmp/.X11-unix` をマウント)。必要に応じてホストで `xhost +local:` を実行してください。
-- `network_mode: host` のため、ホストに接続した端末 (USB Ethernet / Wi-Fi) にもそのまま接続できます。
-- USB モードの切り替えをコンテナ内から行う場合は `/dev/ttyACM0` をコンテナに渡す必要があります。通常はホスト側で実行するか、後述のモック端末を使ってください。
-- ディスプレイがない環境では `Xvfb :99 & DISPLAY=:99 cargo run` で起動できます。
+VS Code の Dev Containers 拡張で開くと、`mcr.microsoft.com/devcontainers/rust:2.1.7-1-trixie` に
+GPUI のビルドに必要なライブラリを加えた環境が起動します。コンテナ内ではビルドとテスト
+(後述のモック端末を使った E2E テストを含む) を行い、GUI の動作確認や実機との接続はホストで行ってください。
 
 ### モック端末
 
@@ -113,6 +110,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
+### libc のバージョン固定について
+
+gpui 0.2.2 が依存する `xattr 0.2.3` は libc 0.2.190 以降でビルドできないため、
+`crates/quaderno4linux/Cargo.toml` で `libc = "=0.2.188"` に固定しています。gpui が新しい xattr に更新されたら固定を外してください。
+
 ### 構成
 
 | パス | 内容 |
@@ -121,7 +123,6 @@ cargo fmt --all --check
 | `crates/quaderno4linux` | GPUI デスクトップアプリ |
 | `crates/quaderno-mock` | 開発・テスト用のモック端末 |
 | `packaging/linux` | udev ルール、デスクトップエントリ |
-| `third_party/xattr` | gpui の依存 `xattr 0.2.3` を新しい libc でビルドするための最小パッチ ([詳細](third_party/xattr/PATCHED.md)) |
 
 ### プロトコルについて
 
