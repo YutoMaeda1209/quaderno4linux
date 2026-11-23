@@ -1,5 +1,4 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/typescript-node
+// For format details, see https://aka.ms/devcontainer.json.
 {
   "name": "Quaderno4Linux",
   "dockerComposeFile": "docker-compose.yml",
@@ -10,14 +9,29 @@
     "ghcr.io/devcontainers/features/common-utils:2": {
       "upgradePackages": true
     },
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "stable",
+      "profile": "default"
+    }
   },
+  // The cargo cache volumes are created as root; hand them to the dev user.
+  "postCreateCommand": "sudo chown -R vscode /usr/local/cargo/registry /usr/local/cargo/git && cargo fetch",
   "customizations": {
     "vscode": {
       "settings": {
-        "editor.formatOnSave": true
+        "editor.formatOnSave": true,
+        "rust-analyzer.check.command": "clippy",
+        "[rust]": {
+          "editor.defaultFormatter": "rust-lang.rust-analyzer"
+        }
       },
-      "extensions": ["EditorConfig.EditorConfig"]
+      "extensions": [
+        "EditorConfig.EditorConfig",
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml"
+      ]
     }
   }
 }
