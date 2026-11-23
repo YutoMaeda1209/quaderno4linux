@@ -1,0 +1,9 @@
+# Fujitsu Quaderno / Sony DPT-RP1 family
+#
+# * Lets the logged-in user open the USB serial port (needed to switch the
+#   device to USB Ethernet mode) without joining the dialout group.
+# * Keeps ModemManager from probing the serial port.
+#
+# Install:  sudo cp 70-quaderno.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+SUBSYSTEM=="tty", ATTRS{idVendor}=="04c5", ATTRS{idProduct}=="1656", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="04c5", ATTRS{idProduct}=="1656", ENV{ID_MM_DEVICE_IGNORE}="1"
