@@ -1,0 +1,39 @@
+name: 機能リクエスト
+description: 新しい機能や改善点を提案するためのテンプレートです。
+title: "[FEAT]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        新しい機能や改善点を提案していただきありがとうございます。
+        以下のテンプレートに従って、できる限り詳しく記入してください。
+  - type: textarea
+    id: description
+    attributes:
+      label: 機能の説明
+      description: 提案する機能や改善点の内容を記入してください。
+      placeholder: |
+        設定画面にダークモードの切り替えを追加する。
+    validations:
+      required: true
+  - type: textarea
+    id: benefits
+    attributes:
+      label: 利点
+      description: この変更による利点を記入してください。
+      placeholder: |
+        夜間にブラウジングするユーザーの目の疲れを軽減できる。
+    validations:
+      required: true
+  - type: checkboxes
+    id: check_list
+    attributes:
+      label: チェックリスト
+      description: 提出する前に以下の項目を確認してください。
+      options:
+        - label: 既存の機能と重複していないことを確認しました。
+        - label: 提案内容が具体的で明確に記述されていることを確認しました。
+        - label: 内容に責任を持てる形で AI を利用しました。
+    validations:
+      required: true
