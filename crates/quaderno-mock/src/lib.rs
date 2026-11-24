@@ -14,6 +14,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use quaderno_core::address::{HTTPS_PORT, HTTP_PORT};
 use quaderno_core::crypto::{normalize_dh, random_bytes, DiffieHellman, SessionKeys};
+use quaderno_core::ROOT_FOLDER_ID;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Pkcs1v15Sign, RsaPublicKey};
 use serde_json::{json, Value};
@@ -80,18 +81,8 @@ pub struct MockDevice {
 impl MockDevice {
     /// `ip` で HTTP (8080) と HTTPS (8443) のサーバーを起動する。
     pub fn start(ip: IpAddr, pin: &str) -> Result<Self> {
-        let mut nodes = HashMap::new();
-        nodes.insert(
-            "root".to_string(),
-            Node {
-                id: "root".into(),
-                name: "Document".into(),
-                parent: None,
-                kind: Kind::Folder,
-                created: now(),
-                modified: now(),
-            },
-        );
+        let root = Node::new(ROOT_FOLDER_ID.into(), "Document".into(), None, Kind::Folder);
+        let nodes = HashMap::from([(root.id.clone(), root)]);
         let state = Arc::new(Mutex::new(State {
             pin: pin.into(),
             pairing: None,
@@ -130,37 +121,11 @@ impl MockDevice {
 
     /// 指定した内容の文書をフォルダ (既定はルート) に追加する。
     pub fn add_document(&self, parent: &str, name: &str, data: &[u8]) -> String {
-        let mut s = self.state.lock().unwrap();
-        let id = s.new_id();
-        s.nodes.insert(
-            id.clone(),
-            Node {
-                id: id.clone(),
-                name: name.into(),
-                parent: Some(parent.into()),
-                kind: Kind::Document(data.to_vec()),
-                created: now(),
-                modified: now(),
-            },
-        );
-        id
+        self.state.lock().unwrap().insert(parent.into(), name.into(), Kind::Document(data.to_vec()))
     }
 
     pub fn add_folder(&self, parent: &str, name: &str) -> String {
-        let mut s = self.state.lock().unwrap();
-        let id = s.new_id();
-        s.nodes.insert(
-            id.clone(),
-            Node {
-                id: id.clone(),
-                name: name.into(),
-                parent: Some(parent.into()),
-                kind: Kind::Folder,
-                created: now(),
-                modified: now(),
-            },
-        );
-        id
+        self.state.lock().unwrap().insert(parent.into(), name.into(), Kind::Folder)
     }
 
     /// すべての文書のパスと内容の対応 (アサーション用)。
@@ -202,10 +167,20 @@ fn now() -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
+impl Node {
+    fn new(id: String, name: String, parent: Option<String>, kind: Kind) -> Self {
+        let created = now();
+        Self { id, name, parent, kind, modified: created.clone(), created }
+    }
+}
+
 impl State {
-    fn new_id(&mut self) -> String {
+    /// `parent` に新しい項目を追加し、その ID を返す。
+    fn insert(&mut self, parent: String, name: String, kind: Kind) -> String {
         self.next_id += 1;
-        format!("{:08x}-mock-{}", self.next_id, uuid::Uuid::new_v4().simple())
+        let id = format!("{:08x}-mock-{}", self.next_id, uuid::Uuid::new_v4().simple());
+        self.nodes.insert(id.clone(), Node::new(id.clone(), name, Some(parent), kind));
+        id
     }
 
     fn path_of(&self, id: &str) -> String {
@@ -509,30 +484,19 @@ fn api(
         (Method::Post, ["folders2"]) | (Method::Post, ["folders"]) => {
             let v = body_json()?;
             let name = v["folder_name"].as_str().context("folder_name")?.to_string();
-            let parent = v["parent_folder_id"].as_str().unwrap_or("root").to_string();
+            let parent = v["parent_folder_id"].as_str().unwrap_or(ROOT_FOLDER_ID).to_string();
             if !s.is_folder(&parent) {
                 return Ok(err(404, "40401", "parent not found"));
             }
             if s.name_taken(&parent, &name, None) {
                 return Ok(err(400, "40007", "folderName already exists"));
             }
-            let id = s.new_id();
-            s.nodes.insert(
-                id.clone(),
-                Node {
-                    id: id.clone(),
-                    name,
-                    parent: Some(parent),
-                    kind: Kind::Folder,
-                    created: now(),
-                    modified: now(),
-                },
-            );
+            let id = s.insert(parent, name, Kind::Folder);
             json_resp(200, json!({ "folder_id": id }))
         }
         (Method::Put, ["folders", id]) | (Method::Put, ["documents", id]) => {
             let v = body_json()?;
-            if !s.nodes.contains_key(*id) || *id == "root" {
+            if !s.nodes.contains_key(*id) || *id == ROOT_FOLDER_ID {
                 return Ok(err(404, "40401", "not found"));
             }
             let node = s.nodes[*id].clone();
@@ -556,7 +520,7 @@ fn api(
             no_content()
         }
         (Method::Delete, ["folders", id]) | (Method::Delete, ["documents", id]) => {
-            if !s.nodes.contains_key(*id) || *id == "root" {
+            if !s.nodes.contains_key(*id) || *id == ROOT_FOLDER_ID {
                 return Ok(err(404, "40401", "not found"));
             }
             s.remove_recursive(id);
@@ -565,7 +529,7 @@ fn api(
         (Method::Post, ["documents2"]) | (Method::Post, ["documents"]) => {
             let v = body_json()?;
             let name = v["file_name"].as_str().context("file_name")?.to_string();
-            let parent = v["parent_folder_id"].as_str().unwrap_or("root").to_string();
+            let parent = v["parent_folder_id"].as_str().unwrap_or(ROOT_FOLDER_ID).to_string();
             if !s.is_folder(&parent) {
                 return Ok(err(404, "40401", "parent not found"));
             }
@@ -574,11 +538,7 @@ fn api(
             s.nodes.retain(|_, n| {
                 !(matches!(n.kind, Kind::Frame) && n.name == name && n.parent.as_deref() == Some(&parent))
             });
-            let id = s.new_id();
-            s.nodes.insert(
-                id.clone(),
-                Node { id: id.clone(), name, parent: Some(parent), kind: Kind::Frame, created: now(), modified: now() },
-            );
+            let id = s.insert(parent, name, Kind::Frame);
             json_resp(200, json!({ "document_id": id }))
         }
         (Method::Put, ["documents", id, "file"]) => {
@@ -588,7 +548,7 @@ fn api(
             let Some(node) = s.nodes.get(*id).cloned() else { return Ok(err(404, "40401", "not found")) };
             match node.kind {
                 Kind::Folder => return Ok(err(404, "40401", "not found")),
-                Kind::Frame if s.name_taken(node.parent.as_deref().unwrap_or("root"), &node.name, Some(id)) => {
+                Kind::Frame if s.name_taken(node.parent.as_deref().unwrap_or(ROOT_FOLDER_ID), &node.name, Some(id)) => {
                     return Ok(err(400, "40007", "fileName already exists"));
                 }
                 _ => {}
@@ -623,18 +583,7 @@ fn api(
             if s.name_taken(&parent, &name, None) {
                 return Ok(err(400, "40007", "fileName already exists"));
             }
-            let new_id = s.new_id();
-            s.nodes.insert(
-                new_id.clone(),
-                Node {
-                    id: new_id.clone(),
-                    name,
-                    parent: Some(parent),
-                    kind: Kind::Document(data),
-                    created: now(),
-                    modified: now(),
-                },
-            );
+            let new_id = s.insert(parent, name, Kind::Document(data));
             json_resp(200, json!({ "document_id": new_id }))
         }
         _ => err(404, "40401", "not found"),
