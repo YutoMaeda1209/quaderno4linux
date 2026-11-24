@@ -10,7 +10,9 @@
       "settings": {
         "editor.formatOnSave": true
       },
-      "extensions": ["EditorConfig.EditorConfig", "rust-lang.rust-analyzer"]
+      "extensions": [
+        "EditorConfig.EditorConfig"
+      ]
     }
   }
 }
