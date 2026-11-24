@@ -1,15 +1,19 @@
 # Quaderno4Linux
 
 富士通 電子ペーパー **QUADERNO** (FMVDP51 など、Sony DPT-RP1 系) を Linux から管理するデスクトップアプリです。
-Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + GPUI Component) で実装しています。
+Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit)\
+(GPUI + GPUI Component) で実装しています。
 
 ## 機能
 
 - **接続**
   - USB: 端末を USB シリアルモードから USB Ethernet モード (RNDIS / CDC-ECM) に切り替え、IPv6 リンクローカルで自動接続
   - Wi-Fi / LAN: mDNS (`_dp_fujitsu._tcp`) で端末を自動検索 (IPv4 を優先)
-  - Bluetooth: ペアリング済みの端末に Bluetooth PAN (PANU) で接続。NetworkManager の接続プロファイル (固定 IPv4) を自動で作成
-  - ペアリング: 端末に表示される 8 桁の PIN で登録 (認証情報は `~/.config/quaderno4linux/` に保存。[dpt-rp1-py](https://github.com/janten/dpt-rp1-py) の `~/.config/dpt/` があればそれも利用)
+  - Bluetooth: ペアリング済みの端末に Bluetooth PAN (PANU) で接続。\
+    NetworkManager の接続プロファイル (固定 IPv4) を自動で作成
+  - ペアリング: 端末に表示される 8 桁の PIN で登録。\
+    認証情報は `~/.config/quaderno4linux/` に保存\
+    ([dpt-rp1-py](https://github.com/janten/dpt-rp1-py) の `~/.config/dpt/` があればそれも利用)
 - **ファイルエクスプローラー**
   - アップロード (ファイル・フォルダ、ウィンドウへのドラッグ＆ドロップにも対応) / ダウンロード (フォルダは再帰的に)
   - フォルダの作成
@@ -32,11 +36,13 @@ Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + GPUI Compone
 
 Ubuntu 24.04 以降 / Fedora 40 以降 (X11 または Wayland)。Vulkan 対応の GPU ドライバ (Mesa など) が必要です。
 ファイル選択ダイアログには xdg-desktop-portal (GNOME / KDE / GTK のいずれかの実装) を使います。
-Bluetooth 接続には BlueZ (`bluetoothctl`) と NetworkManager (`nmcli`) が必要です (Ubuntu / Fedora のデスクトップには標準で入っています)。
+Bluetooth 接続には BlueZ (`bluetoothctl`) と NetworkManager (`nmcli`) が必要です。\
+Ubuntu / Fedora のデスクトップには標準で入っています。
 
 ## インストール
 
-[Releases](https://github.com/YutoMaeda1209/quaderno4linux/releases) から deb (Ubuntu / Debian) か rpm (Fedora) をダウンロードしてインストールします。
+[Releases](https://github.com/YutoMaeda1209/quaderno4linux/releases) から\
+deb (Ubuntu / Debian) か rpm (Fedora) をダウンロードしてインストールします。
 udev ルールとデスクトップエントリも一緒にインストールされます。
 
 ```sh
@@ -51,13 +57,15 @@ Rust (stable) をインストールしたうえで、ビルドに必要なライ
 ```sh
 # Ubuntu / Debian
 sudo apt install build-essential pkg-config clang cmake \
-  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev \
-  libvulkan-dev mesa-vulkan-drivers libfontconfig-dev libfreetype-dev libssl-dev libzstd-dev
+  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
+  libxcb1-dev libvulkan-dev mesa-vulkan-drivers libfontconfig-dev \
+  libfreetype-dev libssl-dev libzstd-dev
 
 # Fedora
 sudo dnf install gcc gcc-c++ clang cmake pkgconf-pkg-config \
   libxkbcommon-devel libxkbcommon-x11-devel wayland-devel libxcb-devel \
-  vulkan-loader-devel mesa-vulkan-drivers fontconfig-devel freetype-devel openssl-devel libzstd-devel
+  vulkan-loader-devel mesa-vulkan-drivers fontconfig-devel freetype-devel \
+  openssl-devel libzstd-devel
 ```
 
 ```sh
@@ -77,15 +85,18 @@ sudo cp packaging/linux/70-quaderno.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
-デスクトップエントリ: `packaging/linux/io.github.yutomaeda1209.quaderno4linux.desktop` を `~/.local/share/applications/` にコピーします。
+デスクトップエントリ: `packaging/linux/io.github.yutomaeda1209.quaderno4linux.desktop` を\
+`~/.local/share/applications/` にコピーします。
 
 ## 使い方
 
 1. **USB**: 端末をケーブルでつなぎ「USB で接続」を押します。うまくいかない場合は方式ボタンで RNDIS / CDC-ECM を切り替えてください。
 2. **Wi-Fi**: 端末とパソコンを同じネットワークにつなぎ「端末を検索」を押して、見つかった端末をダブルクリックします。
-3. **Bluetooth**: 端末で Bluetooth のペアリング画面を開いたまま、OS の Bluetooth 設定で `FMVDP51_<シリアル番号下 7 桁>` とペアリングします (両方の画面に表示される 6 桁の数字を確認)。
-   その後アプリで「端末を検索」を押し、Bluetooth 欄の端末の「接続」を押します。転送速度は Wi-Fi よりかなり遅く (実測 約 0.07 MB/s)、大きなファイルには USB か Wi-Fi が向いています。
-4. 初回はアプリと端末のペアリング (登録) を求められます。端末の画面に表示された PIN を入力してください。端末の画面に表示された PIN を入力してください。
+3. **Bluetooth**: 端末で Bluetooth のペアリング画面を開いたまま、OS の Bluetooth 設定で\
+   `FMVDP51_<シリアル番号下 7 桁>` とペアリングします (両方の画面に表示される 6 桁の数字を確認)。\
+   その後アプリで「端末を検索」を押し、Bluetooth 欄の端末の「接続」を押します。\
+   転送速度は Wi-Fi よりかなり遅く (実測 約 0.07 MB/s)、大きなファイルには USB か Wi-Fi が向いています。
+4. 初回はアプリと端末のペアリング (登録) を求められます。端末の画面に表示された PIN を入力してください。
 5. 右側のエクスプローラーでファイルを操作します。
 
 ### トラブルシューティング
@@ -97,20 +108,28 @@ sudo udevadm control --reload && sudo udevadm trigger
   nmcli connection add type ethernet con-name Quaderno ifname <インターフェース名> \
     ipv4.method link-local ipv6.method link-local
   ```
-- **Bluetooth で接続できない**: 端末は PAN 上で DHCP に応答しないため、アプリは `Quaderno Bluetooth <BD アドレス>` という
-  NetworkManager の接続 (PANU、IPv4 `172.25.48.2/24` 固定) を作成して使います。BNEP 接続は不安定なことがあり、アプリは 3 回まで再試行します。
-  端末のアドレスは mDNS で探し、見つからなければ `172.25.48.1` を試します。
-  `172.25.0.0/16` は Docker の既定ブリッジと重なることがあるので、うまく通信できない場合は `ip route get 172.25.48.1` で経路を確認してください。
-- **アドレスの直接指定**: `quaderno4linux --connect 192.168.0.20` のように起動時に指定できます (IPv6 リンクローカルは `fe80::xxxx%enx0123456789ab` のようにインターフェース名付き)。
-- **ログ**: エラーの詳細は `~/.local/state/quaderno4linux/quaderno4linux.log` に記録されます (起動ごとに上書き)。エラー通知の「ログを開く」から開けます。`RUST_LOG=debug quaderno4linux` でより詳細なログを出力します。
+
+- **Bluetooth で接続できない**: 端末は PAN 上で DHCP に応答しないため、アプリは\
+  `Quaderno Bluetooth <BD アドレス>` という NetworkManager の接続\
+  (PANU、IPv4 `172.25.48.2/24` 固定) を作成して使います。\
+  BNEP 接続は不安定なことがあり、アプリは 3 回まで再試行します。\
+  端末のアドレスは mDNS で探し、見つからなければ `172.25.48.1` を試します。\
+  `172.25.0.0/16` は Docker の既定ブリッジと重なることがあります。\
+  うまく通信できない場合は `ip route get 172.25.48.1` で経路を確認してください。
+- **アドレスの直接指定**: `quaderno4linux --connect 192.168.0.20` のように起動時に指定できます。\
+  IPv6 リンクローカルは `fe80::xxxx%enx0123456789ab` のようにインターフェース名を付けます。
+- **ログ**: エラーの詳細は `~/.local/state/quaderno4linux/quaderno4linux.log` に記録されます\
+  (起動ごとに上書き)。エラー通知の「ログを開く」から開けます。\
+  `RUST_LOG=debug quaderno4linux` でより詳細なログを出力します。
 
 ## 開発
 
 ### DevContainer
 
-VS Code の Dev Containers 拡張で開くと、`mcr.microsoft.com/devcontainers/rust:2.1.7-1-trixie` に
-GPUI のビルドに必要なライブラリを加えた環境が起動します。コンテナ内ではビルドとテスト
-(後述のモック端末を使った E2E テストを含む) を行い、GUI の動作確認や実機との接続はホストで行ってください。
+VS Code の Dev Containers 拡張で開くと、GPUI のビルドに必要なライブラリを\
+`mcr.microsoft.com/devcontainers/rust:2.1.7-1-trixie` に加えた環境が起動します。\
+コンテナ内ではビルドとテスト (後述のモック端末を使った E2E テストを含む) を行い、\
+GUI の動作確認や実機との接続はホストで行ってください。
 
 ### モック端末
 
@@ -141,12 +160,16 @@ cargo fmt --all --check
 
 ### プロトコルについて
 
-[QUADERNO のプロトコル調査メモ](https://gist.github.com/YutoMaeda1209/d51764c40666c02df871c711d32ed837) と
-[dpt-rp1-py](https://github.com/janten/dpt-rp1-py) を参考にしています。概要:
+[QUADERNO のプロトコル調査メモ](https://gist.github.com/YutoMaeda1209/d51764c40666c02df871c711d32ed837)\
+と [dpt-rp1-py](https://github.com/janten/dpt-rp1-py) を参考にしています。概要:
 
-- USB: シリアル (`04c5:1656`) に `01 00 00 01 00 00 00 01 <00=RNDIS|01=CDC-ECM> 04` を書き込むと USB Ethernet (`04c5:1657`) に切り替わる
-- Wi-Fi / Bluetooth: mDNS (`_dp_fujitsu._tcp.local.`) で検索。Bluetooth は Classic PAN (端末が NAP、PC が PANU)、DHCP なし
-- ポート 8080 (HTTP): 端末情報・ペアリング (DH group 14 + PBKDF2-HMAC-SHA256 + AES-128-CBC 鍵ラップ。端末の DH 公開鍵 YB は受信したバイト列のまま HMAC に使う)
+- USB: シリアル (`04c5:1656`) に `01 00 00 01 00 00 00 01 <00=RNDIS|01=CDC-ECM> 04` を書き込むと\
+  USB Ethernet (`04c5:1657`) に切り替わる
+- Wi-Fi / Bluetooth: mDNS (`_dp_fujitsu._tcp.local.`) で検索。\
+  Bluetooth は Classic PAN (端末が NAP、PC が PANU)、DHCP なし
+- ポート 8080 (HTTP): 端末情報・ペアリング\
+  (DH group 14 + PBKDF2-HMAC-SHA256 + AES-128-CBC 鍵ラップ)。\
+  端末の DH 公開鍵 YB は受信したバイト列のまま HMAC に使う
 - ポート 8443 (HTTPS, 自己署名証明書): RSA 署名による認証後、`Credentials` クッキーで文書 API を利用
 
 コントリビュートの方法は [CONTRIBUTING.md](.github/CONTRIBUTING.md) を参照してください。
