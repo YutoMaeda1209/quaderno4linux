@@ -25,6 +25,8 @@ pub const PRODUCT_ID_ETHERNET: &str = "1657";
 /// udev rule that grants the logged-in user access to the serial port.
 pub const UDEV_RULE: &str = include_str!("../../../packaging/linux/70-quaderno.rules");
 pub const UDEV_RULE_PATH: &str = "/etc/udev/rules.d/70-quaderno.rules";
+/// Where the deb / rpm package installs the rule.
+pub const PACKAGED_UDEV_RULE_PATH: &str = "/usr/lib/udev/rules.d/70-quaderno.rules";
 
 /// USB Ethernet flavour to switch to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,7 +135,10 @@ pub fn switch_to_ethernet(port: &Path, mode: UsbNetMode) -> Result<()> {
 
 /// `true` when the bundled udev rule is installed with the current contents.
 pub fn udev_rule_installed() -> bool {
-    fs::read_to_string(UDEV_RULE_PATH).is_ok_and(|s| s == UDEV_RULE)
+    // A rule in /etc overrides the one the deb / rpm package installs under /usr/lib.
+    fs::read_to_string(UDEV_RULE_PATH)
+        .or_else(|_| fs::read_to_string(PACKAGED_UDEV_RULE_PATH))
+        .is_ok_and(|s| s == UDEV_RULE)
 }
 
 /// Installs the bundled udev rule through `pkexec` (the desktop's polkit agent

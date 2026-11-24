@@ -4,6 +4,7 @@ description = "A simulated Quaderno device for development and tests (no hardwar
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish = false
 
 [dependencies]

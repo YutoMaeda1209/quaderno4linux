@@ -10,3 +10,7 @@ RUN apt-get update \
     libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev \
     libvulkan-dev \
   && rm -rf /var/lib/apt/lists/*
+
+# Tools that package the release as .deb and .rpm.
+RUN cargo install --locked cargo-deb@3.8.0 cargo-generate-rpm@0.21.1 \
+  && rm -rf /usr/local/cargo/registry

@@ -4,6 +4,7 @@ description = "Desktop manager for Fujitsu Quaderno on Linux"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [dependencies]
 quaderno-core.workspace = true
@@ -16,3 +17,51 @@ dirs = "6"
 # directory at run time, which does not exist when a binary built in the dev
 # container runs on the host; `debug-embed` embeds them as in release builds.
 rust-embed = { version = "8", features = ["debug-embed"] }
+
+[package.metadata.deb]
+maintainer = "Yuto Maeda <yuto.maeda@mendako.dev>"
+copyright = "2026 YutoMaeda1209"
+license-file = ["../../LICENSE", "0"]
+extended-description = "Manage documents on Fujitsu Quaderno (Sony DPT-RP1 family) e-paper devices over USB, Wi-Fi and Bluetooth."
+section = "utils"
+# Vulkan and Wayland are loaded at run time, so `$auto` does not find them.
+depends = "$auto, libvulkan1, mesa-vulkan-drivers | vulkan-icd, libwayland-client0"
+recommends = "xdg-desktop-portal, bluez, network-manager"
+maintainer-scripts = "../../packaging/linux/deb"
+assets = [
+    ["target/release/quaderno4linux", "usr/bin/", "755"],
+    ["../../packaging/linux/70-quaderno.rules", "usr/lib/udev/rules.d/", "644"],
+    ["../../packaging/linux/io.github.yutomaeda1209.quaderno4linux.desktop", "usr/share/applications/", "644"],
+    ["../../README.md", "usr/share/doc/quaderno4linux/", "644"],
+]
+
+[package.metadata.generate-rpm]
+post_install_script = """
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload || :
+    udevadm trigger --subsystem-match=tty --action=change || :
+fi
+"""
+post_uninstall_script = """
+if [ "$1" -eq 0 ] && command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload || :
+fi
+"""
+auto-req = "builtin"
+assets = [
+    { source = "target/release/quaderno4linux", dest = "/usr/bin/quaderno4linux", mode = "755" },
+    { source = "packaging/linux/70-quaderno.rules", dest = "/usr/lib/udev/rules.d/70-quaderno.rules", mode = "644" },
+    { source = "packaging/linux/io.github.yutomaeda1209.quaderno4linux.desktop", dest = "/usr/share/applications/io.github.yutomaeda1209.quaderno4linux.desktop", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/quaderno4linux/README.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/licenses/quaderno4linux/LICENSE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+vulkan-loader = "*"
+libwayland-client = "*"
+
+[package.metadata.generate-rpm.recommends]
+mesa-vulkan-drivers = "*"
+xdg-desktop-portal = "*"
+bluez = "*"
+NetworkManager = "*"

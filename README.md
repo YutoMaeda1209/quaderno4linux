@@ -34,6 +34,16 @@ Ubuntu 24.04 以降 / Fedora 40 以降 (X11 または Wayland)。Vulkan 対応�
 ファイル選択ダイアログには xdg-desktop-portal (GNOME / KDE / GTK のいずれかの実装) を使います。
 Bluetooth 接続には BlueZ (`bluetoothctl`) と NetworkManager (`nmcli`) が必要です (Ubuntu / Fedora のデスクトップには標準で入っています)。
 
+## インストール
+
+[Releases](https://github.com/YutoMaeda1209/quaderno4linux/releases) から deb (Ubuntu / Debian) か rpm (Fedora) をダウンロードしてインストールします。
+udev ルールとデスクトップエントリも一緒にインストールされます。
+
+```sh
+sudo apt install ./quaderno4linux_<バージョン>-1_amd64.deb    # Ubuntu / Debian
+sudo dnf install ./quaderno4linux-<バージョン>-1.x86_64.rpm   # Fedora
+```
+
 ## ビルド
 
 Rust (stable) をインストールしたうえで、ビルドに必要なライブラリを入れます。
@@ -57,6 +67,7 @@ cargo build --release
 
 ### USB 接続のための設定 (初回のみ)
 
+deb / rpm でインストールした場合は udev ルールが入っているので、この設定は不要です。
 USB モードの切り替えには端末のシリアルポート (`/dev/ttyACM*`) への書き込み権限が必要です。
 権限がない状態で「USB で接続」を押すと、アプリが同梱の udev ルールを `/etc/udev/rules.d/70-quaderno.rules` にインストールするか確認します
 (管理者パスワードを求められます。polkit の `pkexec` を使います)。手動でインストールする場合は次のとおりです。

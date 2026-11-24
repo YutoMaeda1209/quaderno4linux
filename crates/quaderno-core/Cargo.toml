@@ -4,6 +4,7 @@ description = "Protocol library for Fujitsu Quaderno / Sony DPT e-paper devices"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [dependencies]
 thiserror.workspace = true
