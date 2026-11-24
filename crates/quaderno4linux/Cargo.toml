@@ -8,12 +8,10 @@ edition.workspace = true
 quaderno-core.workspace = true
 anyhow.workspace = true
 log.workspace = true
-gpui = "0.2.2"
-gpui-component = "0.5.1"
-gpui-component-assets = "0.5.1"
+gpui-kit = "0.11.0"
 env_logger = "0.11"
 dirs = "6"
-# gpui 0.2.2 depends (via zed-async-tar) on xattr 0.2.3, which uses `libc::ENOATTR`.
-# That constant was removed for Linux in libc 0.2.190, so pin libc until gpui
-# moves to a newer xattr. Not used directly by this crate.
-libc = "=0.2.188"
+# Not used directly. Debug builds of rust-embed read the icons from the source
+# directory at run time, which does not exist when a binary built in the dev
+# container runs on the host; `debug-embed` embeds them as in release builds.
+rust-embed = { version = "8", features = ["debug-embed"] }

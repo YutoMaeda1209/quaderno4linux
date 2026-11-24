@@ -9,8 +9,8 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use gpui::{px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions};
-use gpui_component::{Root, TitleBar};
+use gpui_kit::component::{Theme, TitleBar};
+use gpui_kit::{px, size, Anchor, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
 
 use crate::app::QuadernoApp;
 
@@ -21,10 +21,15 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let initial_address = args.iter().position(|a| a == "--connect").and_then(|i| args.get(i + 1).cloned());
 
-    Application::new().with_assets(gpui_component_assets::Assets).run(move |cx: &mut App| {
-        gpui_component::init(cx);
+    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx: &mut App| {
+        gpui_kit::init(cx);
+        Theme::update(cx, |theme| {
+            theme.notification.placement = Anchor::BottomRight;
+            // Keep notifications above the status bar.
+            theme.notification.margins.bottom = px(42.);
+        });
         bind_keys(cx);
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
             }
@@ -39,10 +44,9 @@ fn main() {
             app_id: Some("io.github.yutomaeda1209.quaderno4linux".into()),
             ..Default::default()
         };
-        cx.open_window(options, |window, cx| {
+        gpui_kit::open_window(options, cx, |window, cx| {
             window.set_window_title("Quaderno4Linux");
-            let view = cx.new(|cx| QuadernoApp::new(initial_address.clone(), window, cx));
-            cx.new(|cx| Root::new(view, window, cx))
+            cx.new(|cx| QuadernoApp::new(initial_address.clone(), window, cx))
         })
         .expect("failed to open the main window");
         cx.activate(true);

@@ -1,13 +1,15 @@
 //! Small modal dialogs (text prompt, confirmation) and notifications.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui::{div, prelude::*, px, Context, Entity, SharedString, Window};
-use gpui_component::button::{Button, ButtonVariant, ButtonVariants};
-use gpui_component::dialog::DialogButtonProps;
-use gpui_component::input::{Input, InputState};
-use gpui_component::{h_flex, v_flex, ActiveTheme, Icon, IconName, Sizable, WindowExt};
+use gpui_kit::component::button::{Button, ButtonVariant};
+use gpui_kit::component::dialog::DialogButtonProps;
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::notification::{Notification, NotificationType};
+use gpui_kit::component::WindowExt;
+use gpui_kit::{prelude::*, px, Context, Entity, Focusable, SharedString, Window};
 
 use crate::app::QuadernoApp;
 
@@ -37,7 +39,7 @@ impl QuadernoApp {
             let input = input.clone();
             let view = view.clone();
             let on_submit = on_submit.clone();
-            move |window: &mut Window, cx: &mut gpui::App| -> bool {
+            move |window: &mut Window, cx: &mut gpui_kit::App| -> bool {
                 let value = input.read(cx).value().trim().to_string();
                 if value.is_empty() {
                     return false;
@@ -50,23 +52,22 @@ impl QuadernoApp {
         let title: SharedString = title.into();
         let description: SharedString = description.into();
         let ok_text: SharedString = ok_text.into();
-        let input_for_dialog = input.clone();
-        window.open_dialog(cx, move |dialog, _, cx| {
+        // The builder can run again when the dialog layer is rebuilt; focus the input only once.
+        let initial_focus = Cell::new(true);
+        window.open_alert_dialog(cx, move |dialog, window, cx| {
+            if initial_focus.replace(false) {
+                input.focus_handle(cx).focus(window, cx);
+            }
             let submit = submit.clone();
             dialog
                 .title(title.clone())
-                .w(gpui::px(440.))
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child(description.clone()))
-                        .child(Input::new(&input_for_dialog)),
-                )
+                .description(description.clone())
+                .width(px(440.))
+                .child(Input::new(&input))
                 .confirm()
                 .button_props(DialogButtonProps::default().ok_text(ok_text.clone()).cancel_text("キャンセル"))
                 .on_ok(move |_, window, cx| submit(window, cx))
         });
-        input.update(cx, |state, cx| state.focus(window, cx));
     }
 
     /// Shows a confirmation dialog.
@@ -86,15 +87,15 @@ impl QuadernoApp {
         let title: SharedString = title.into();
         let message: SharedString = message.into();
         let ok_text: SharedString = ok_text.into();
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_alert_dialog(cx, move |dialog, _, _| {
             let view = view.clone();
             let on_ok = on_ok.clone();
             let props = DialogButtonProps::default().ok_text(ok_text.clone()).cancel_text("キャンセル");
             let props = if danger { props.ok_variant(ButtonVariant::Danger) } else { props };
             dialog
                 .title(title.clone())
-                .w(gpui::px(440.))
-                .child(div().text_sm().child(message.clone()))
+                .description(message.clone())
+                .width(px(440.))
                 .confirm()
                 .button_props(props)
                 .on_ok(move |_, window, cx| {
@@ -116,98 +117,55 @@ impl QuadernoApp {
         let summary = summary.into();
         log::error!("{summary}: {detail:#}");
         self.record_log(format!("エラー: {summary}"));
-        self.push_toast(ToastKind::Error, summary, window, cx);
+        self.push_toast(NotificationType::Error, summary, window, cx);
     }
 
     pub fn notify_warning(&mut self, message: impl Into<SharedString>, window: &mut Window, cx: &mut Context<Self>) {
         let message = message.into();
         log::warn!("{message}");
         self.record_log(format!("警告: {message}"));
-        self.push_toast(ToastKind::Warning, message, window, cx);
+        self.push_toast(NotificationType::Warning, message, window, cx);
     }
 
     pub fn notify_success(&mut self, message: impl Into<SharedString>, window: &mut Window, cx: &mut Context<Self>) {
         let message = message.into();
         self.push_log(message.to_string());
-        self.push_toast(ToastKind::Success, message, window, cx);
+        self.push_toast(NotificationType::Success, message, window, cx);
     }
 
-    fn push_toast(&mut self, kind: ToastKind, message: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+    fn push_toast(
+        &mut self,
+        kind: NotificationType,
+        message: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let id = self.next_toast_id;
         self.next_toast_id += 1;
-        self.toasts.push(Toast { id, kind, message });
-        if self.toasts.len() > MAX_TOASTS {
-            self.toasts.remove(0);
-        }
-        cx.spawn_in(window, async move |this, cx| {
+        // Autohide is fixed at 5 seconds, so hide it ourselves after `TOAST_DURATION`.
+        let note = Notification::new().id1::<ToastKey>(id).with_type(kind).message(message).autohide(false);
+        let note = if matches!(kind, NotificationType::Error) {
+            note.action(|_, _, _| {
+                Button::new("open-log").label("ログを開く").outline().on_click(|_, _, cx| {
+                    match crate::log_file_path() {
+                        Some(path) => cx.open_with_system(&path),
+                        None => log::error!("ログファイルの場所を決められません"),
+                    }
+                })
+            })
+        } else {
+            note
+        };
+        window.push_notification(note, cx);
+        cx.spawn_in(window, async move |_, cx| {
             cx.background_executor().timer(TOAST_DURATION).await;
-            let _ = this.update(cx, |this, cx| this.dismiss_toast(id, cx));
+            let _ = cx.update(|window, cx| window.remove_notification1::<ToastKey>(id, cx));
         })
         .detach();
-        cx.notify();
-    }
-
-    fn dismiss_toast(&mut self, id: u64, cx: &mut Context<Self>) {
-        self.toasts.retain(|t| t.id != id);
-        cx.notify();
-    }
-
-    /// Notifications stacked at the bottom right; newer ones push older ones up.
-    pub fn render_toasts(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let toasts = self.toasts.iter().map(|toast| {
-            let id = toast.id;
-            let icon = match toast.kind {
-                ToastKind::Success => Icon::new(IconName::CircleCheck).text_color(theme.success),
-                ToastKind::Warning => Icon::new(IconName::TriangleAlert).text_color(theme.warning),
-                ToastKind::Error => Icon::new(IconName::CircleX).text_color(theme.danger),
-            };
-            h_flex()
-                .id(("toast", id))
-                .occlude()
-                .w(px(380.))
-                .px_4()
-                .py_3()
-                .gap_3()
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.popover)
-                .rounded(theme.radius_lg)
-                .shadow_md()
-                .child(icon)
-                .child(div().flex_1().min_w_0().text_sm().child(toast.message.clone()))
-                .when(toast.kind == ToastKind::Error, |el| {
-                    el.child(Button::new(("toast-log", id)).label("ログを開く").small().outline().on_click(
-                        cx.listener(|_, _, _, cx| match crate::log_file_path() {
-                            Some(path) => cx.open_with_system(&path),
-                            None => log::error!("ログファイルの場所を決められません"),
-                        }),
-                    ))
-                })
-                .child(
-                    Button::new(("toast-close", id))
-                        .icon(IconName::Close)
-                        .ghost()
-                        .xsmall()
-                        .on_click(cx.listener(move |this, _, _, cx| this.dismiss_toast(id, cx))),
-                )
-        });
-        div().absolute().bottom(px(42.)).right_4().child(v_flex().gap_2().children(toasts))
     }
 }
 
 const TOAST_DURATION: Duration = Duration::from_secs(10);
-const MAX_TOASTS: usize = 5;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ToastKind {
-    Success,
-    Warning,
-    Error,
-}
-
-pub struct Toast {
-    id: u64,
-    kind: ToastKind,
-    message: SharedString,
-}
+/// Id type that keys this app's notifications so each can be removed on its own.
+struct ToastKey;

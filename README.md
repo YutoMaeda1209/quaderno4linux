@@ -1,7 +1,7 @@
 # Quaderno4Linux
 
 富士通 電子ペーパー **QUADERNO** (FMVDP51 など、Sony DPT-RP1 系) を Linux から管理するデスクトップアプリです。
-Rust と [GPUI](https://www.gpui.rs/) (+ [gpui-component](https://github.com/longbridge/gpui-component)) で実装しています。
+Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + GPUI Component) で実装しています。
 
 ## 機能
 
@@ -118,11 +118,6 @@ cargo test --workspace         # 単体テスト + モック端末を使った E
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
 ```
-
-### libc のバージョン固定について
-
-gpui 0.2.2 が依存する `xattr 0.2.3` は libc 0.2.190 以降でビルドできないため、
-`crates/quaderno4linux/Cargo.toml` で `libc = "=0.2.188"` に固定しています。gpui が新しい xattr に更新されたら固定を外してください。
 
 ### 構成
 

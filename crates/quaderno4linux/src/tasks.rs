@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use gpui::{Context, Window};
+use gpui_kit::{Context, Window};
 
 use crate::app::QuadernoApp;
 

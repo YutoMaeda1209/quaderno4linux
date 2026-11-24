@@ -5,11 +5,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use gpui::{div, prelude::*, px, ClickEvent, Context, FocusHandle, SharedString, UniformListScrollHandle, Window};
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::progress::Progress;
-use gpui_component::spinner::Spinner;
-use gpui_component::{h_flex, v_flex, ActiveTheme, Disableable, IconName, Root, Sizable, TitleBar};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::group_box::GroupBox;
+use gpui_kit::component::list::ListItem;
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::status_bar::StatusBar;
+use gpui_kit::component::table::TableState;
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme, Disableable, IconName, Sizable, TitleBar};
+use gpui_kit::{
+    div, prelude::*, px, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, StyleRefinement, Window,
+};
 use quaderno_core::bluetooth::{self, BluetoothDevice};
 use quaderno_core::usb::UsbNetMode;
 use quaderno_core::{
@@ -17,13 +23,13 @@ use quaderno_core::{
     Registration, Transport, ROOT_FOLDER_ID,
 };
 
-use crate::dialogs::Toast;
+use crate::explorer::EntryTable;
 use crate::tasks::TaskProgress;
 
 pub const CONTEXT: &str = "QuadernoApp";
 
 pub mod actions {
-    gpui::actions!(
+    gpui_kit::actions!(
         quaderno,
         [
             Refresh,
@@ -84,12 +90,11 @@ pub struct QuadernoApp {
     pub anchor: Option<usize>,
     pub cursor: Option<usize>,
     pub clipboard: Option<Clipboard>,
-    pub list_scroll: UniformListScrollHandle,
+    pub table: Entity<TableState<EntryTable>>,
 
     pub busy: Option<TaskProgress>,
     pub log: Vec<String>,
-    /// Notifications shown at the bottom right, oldest first.
-    pub toasts: Vec<Toast>,
+    /// Id of the next notification, so each one can be hidden on its own.
     pub next_toast_id: u64,
 }
 
@@ -104,8 +109,19 @@ impl QuadernoApp {
                 None
             }
         };
+        let focus_handle = cx.focus_handle();
+        let app = cx.weak_entity();
+        let table = cx.new(|cx| {
+            TableState::new(EntryTable::new(app), window, cx)
+                .row_selectable(false)
+                .col_selectable(false)
+                .col_movable(false)
+                .sortable(false)
+        });
+        // Keyboard handling (selection, shortcuts) lives on the app's own focus handle.
+        cx.on_focus(&table.focus_handle(cx), window, |this, window, cx| window.focus(&this.focus_handle, cx)).detach();
         let mut this = Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             store,
             credentials,
             devices: Vec::new(),
@@ -120,10 +136,9 @@ impl QuadernoApp {
             anchor: None,
             cursor: None,
             clipboard: None,
-            list_scroll: UniformListScrollHandle::new(),
+            table,
             busy: None,
             log,
-            toasts: Vec::new(),
             next_toast_id: 0,
         };
         this.push_log(match &this.credentials {
@@ -324,7 +339,7 @@ impl QuadernoApp {
                     this.connection = Connection::Connected { client, name, status };
                     this.path.truncate(1);
                     this.set_entries(entries);
-                    window.focus(&this.focus_handle);
+                    window.focus(&this.focus_handle, cx);
                 }
                 Err(e) => {
                     if matches!(e.downcast_ref::<Error>(), Some(Error::Auth(_))) {
@@ -514,13 +529,9 @@ impl QuadernoApp {
             let addr = d.address;
             let label = d.info.as_ref().map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
             let via = d.transport.label();
-            div()
-                .id(("device", i))
+            ListItem::new(("device", i))
                 .px_2()
-                .py_1()
                 .rounded(theme.radius)
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.list_hover))
                 .child(div().text_sm().child(label))
                 .child(div().text_xs().text_color(theme.muted_foreground).child(format!("{via} · {addr}")))
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
@@ -533,7 +544,7 @@ impl QuadernoApp {
         let connection_box = match &self.connection {
             Connection::Connected { name, status, .. } => v_flex()
                 .gap_1()
-                .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(name.clone()))
+                .child(div().text_sm().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(name.clone()))
                 .child(div().text_xs().text_color(theme.muted_foreground).child(status.clone()))
                 .child(
                     Button::new("disconnect")
@@ -548,6 +559,68 @@ impl QuadernoApp {
             }
         };
 
+        let usb_buttons = h_flex()
+            .gap_2()
+            .child(
+                Button::new("connect-usb")
+                    .label("USB で接続")
+                    .icon(IconName::ArrowRight)
+                    .primary()
+                    .small()
+                    .disabled(busy || connected)
+                    .on_click(cx.listener(|this, _, window, cx| this.connect_usb(window, cx))),
+            )
+            .child(
+                Button::new("usb-mode")
+                    .label(match self.usb_mode {
+                        UsbNetMode::Rndis => "RNDIS",
+                        UsbNetMode::CdcEcm => "CDC-ECM",
+                    })
+                    .tooltip("USB Ethernet の方式 (通常は RNDIS)")
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.usb_mode = match this.usb_mode {
+                            UsbNetMode::Rndis => UsbNetMode::CdcEcm,
+                            UsbNetMode::CdcEcm => UsbNetMode::Rndis,
+                        };
+                        cx.notify();
+                    })),
+            );
+
+        let device_list = v_flex()
+            .id("devices")
+            .gap_1()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .when(self.devices.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("端末が見つかりません。Wi-Fi の場合は端末と同じネットワークに接続してください"),
+                )
+            })
+            .children(devices);
+
+        let pairing_status = div().text_xs().text_color(theme.muted_foreground).child(match &self.credentials {
+            Some(c) => format!("登録済みクライアント: {}", short_id(&c.client_id)),
+            None => "未登録".into(),
+        });
+        let pair_button = Button::new("pair").label("ペアリングし直す").small().ghost().disabled(busy).on_click(
+            cx.listener(|this, _, window, cx| {
+                let addr = match &this.connection {
+                    Connection::Connected { client, .. } => Some(*client.address()),
+                    Connection::Disconnected => this.devices.first().map(|d| d.address),
+                };
+                match addr {
+                    Some(addr) => this.start_pairing(addr, window, cx),
+                    None => this.notify_warning("先に「端末を検索」で端末を見つけてください", window, cx),
+                }
+            }),
+        );
+
         v_flex()
             .w(px(280.))
             .h_full()
@@ -556,88 +629,29 @@ impl QuadernoApp {
             .border_color(theme.border)
             .bg(theme.sidebar)
             .p_3()
-            .gap_3()
-            .child(section_title("接続", cx))
-            .child(connection_box)
+            .gap_4()
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("connect-usb")
-                            .label("USB で接続")
-                            .icon(IconName::ArrowRight)
-                            .primary()
-                            .small()
-                            .disabled(busy || connected)
-                            .on_click(cx.listener(|this, _, window, cx| this.connect_usb(window, cx))),
-                    )
-                    .child(
-                        Button::new("usb-mode")
-                            .label(match self.usb_mode {
-                                UsbNetMode::Rndis => "RNDIS",
-                                UsbNetMode::CdcEcm => "CDC-ECM",
-                            })
-                            .tooltip("USB Ethernet の方式 (通常は RNDIS)")
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.usb_mode = match this.usb_mode {
-                                    UsbNetMode::Rndis => UsbNetMode::CdcEcm,
-                                    UsbNetMode::CdcEcm => UsbNetMode::Rndis,
-                                };
-                                cx.notify();
-                            })),
-                    ),
+                section("connection", "接続")
+                    .child(connection_box)
+                    .child(usb_buttons)
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(usb_summary)),
             )
-            .child(div().text_xs().text_color(theme.muted_foreground).child(usb_summary))
-            .child(section_title("Bluetooth", cx))
-            .child(bluetooth_section)
-            .child(section_title("Wi-Fi", cx))
+            .child(section("bluetooth", "Bluetooth").child(bluetooth_section))
             .child(
-                h_flex().child(
-                    Button::new("discover")
-                        .label("端末を検索")
-                        .icon(IconName::Search)
-                        .small()
-                        .outline()
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, window, cx| this.discover(window, cx))),
+                section("wifi", "Wi-Fi").child(
+                    h_flex().child(
+                        Button::new("discover")
+                            .label("端末を検索")
+                            .icon(IconName::Search)
+                            .small()
+                            .outline()
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| this.discover(window, cx))),
+                    ),
                 ),
             )
-            .child(section_title("見つかった端末", cx))
-            .child(
-                v_flex()
-                    .id("devices")
-                    .gap_1()
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .when(self.devices.is_empty(), |el| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child("端末が見つかりません。Wi-Fi の場合は端末と同じネットワークに接続してください"),
-                        )
-                    })
-                    .children(devices),
-            )
-            .child(section_title("ペアリング", cx))
-            .child(div().text_xs().text_color(theme.muted_foreground).child(match &self.credentials {
-                Some(c) => format!("登録済みクライアント: {}", short_id(&c.client_id)),
-                None => "未登録".into(),
-            }))
-            .child(Button::new("pair").label("ペアリングし直す").small().ghost().disabled(busy).on_click(cx.listener(
-                |this, _, window, cx| {
-                    let addr = match &this.connection {
-                        Connection::Connected { client, .. } => Some(*client.address()),
-                        Connection::Disconnected => this.devices.first().map(|d| d.address),
-                    };
-                    match addr {
-                        Some(addr) => this.start_pairing(addr, window, cx),
-                        None => this.notify_warning("先に「端末を検索」で端末を見つけてください", window, cx),
-                    }
-                },
-            )))
+            .child(section("devices-section", "見つかった端末").flex_1().min_h_0().child(device_list))
+            .child(section("pairing", "ペアリング").child(pairing_status).child(h_flex().child(pair_button)))
     }
 
     fn render_bluetooth(&self, disabled: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -650,35 +664,28 @@ impl QuadernoApp {
         }
         v_flex().gap_1().children(self.bt_devices.iter().enumerate().map(|(i, dev)| {
             let d = dev.clone();
-            h_flex()
-                .gap_2()
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().text_sm().truncate().child(dev.name.clone()))
-                        .child(div().text_xs().text_color(theme.muted_foreground).child(dev.address.clone())),
-                )
-                .child(
-                    Button::new(("bt-connect", i)).label("接続").small().outline().disabled(disabled).on_click(
-                        cx.listener(move |this, _, window, cx| this.connect_bluetooth(d.clone(), window, cx)),
-                    ),
-                )
+            ListItem::new(("bt-device", i))
+                .px_2()
+                .rounded(theme.radius)
+                .child(div().text_sm().truncate().child(dev.name.clone()))
+                .child(div().text_xs().text_color(theme.muted_foreground).child(dev.address.clone()))
+                .suffix({
+                    let view = cx.entity();
+                    move |_, _| {
+                        let view = view.clone();
+                        let d = d.clone();
+                        Button::new(("bt-connect", i)).label("接続").small().outline().disabled(disabled).on_click(
+                            move |_, window, cx| {
+                                view.update(cx, |this, cx| this.connect_bluetooth(d.clone(), window, cx))
+                            },
+                        )
+                    }
+                })
         }))
     }
 
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let mut bar = h_flex()
-            .h(px(30.))
-            .px_3()
-            .gap_3()
-            .flex_shrink_0()
-            .border_t_1()
-            .border_color(theme.border)
-            .bg(theme.title_bar)
-            .text_xs()
-            .text_color(theme.muted_foreground);
+    fn render_status_bar(&self) -> impl IntoElement {
+        let mut bar = StatusBar::new().h(px(30.)).px_3().flex_shrink_0();
         if let Some(busy) = &self.busy {
             let s = busy.snapshot();
             let mut text = s.label.clone();
@@ -688,27 +695,32 @@ impl QuadernoApp {
             if s.total > 0 {
                 text = format!("{text} ({} / {})", format_size(s.done), format_size(s.total));
             }
-            bar = bar.child(Spinner::new().small()).child(div().flex_1().truncate().child(text));
+            bar = bar.left(Spinner::new().small()).child(div().flex_1().truncate().child(text));
             if let Some(p) = busy.percent() {
-                bar = bar.child(div().w(px(160.)).child(Progress::new().value(p)));
+                bar = bar.right(div().w(px(160.)).child(Progress::new("task-progress").value(p)));
             }
         } else {
             let last = self.log.last().cloned().unwrap_or_default();
             bar = bar.child(div().flex_1().truncate().child(last));
             if let Some(clip) = &self.clipboard {
                 let verb = if clip.mode == ClipboardMode::Copy { "コピー" } else { "切り取り" };
-                bar = bar.child(format!("クリップボード: {} 件 ({verb})", clip.entries.len()));
+                bar = bar.right(format!("クリップボード: {} 件 ({verb})", clip.entries.len()));
             }
+        }
+        if self.client().is_some() {
+            bar = bar.right(format!("{} 項目 · {} 件選択", self.entries.len(), self.selection.len()));
         }
         bar
     }
 }
 
-fn section_title(text: &'static str, cx: &App) -> impl IntoElement {
-    div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).text_color(cx.theme().muted_foreground).child(text)
+fn section(id: &'static str, title: &'static str) -> GroupBox {
+    GroupBox::new()
+        .id(id)
+        .gap_2()
+        .title(div().text_xs().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(title))
+        .content_style(StyleRefinement::default().gap_2())
 }
-
-use gpui::App;
 
 pub fn is_double_click(ev: &ClickEvent) -> bool {
     matches!(ev, ClickEvent::Mouse(m) if m.up.click_count >= 2)
@@ -752,11 +764,9 @@ pub fn device_status(client: &DeviceClient) -> String {
 
 impl Render for QuadernoApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dialog_layer = Root::render_dialog_layer(window, cx);
-        let toast_layer = self.render_toasts(cx);
         let sidebar = self.render_sidebar(cx);
         let explorer = self.render_explorer(window, cx);
-        let status = self.render_status_bar(cx);
+        let status = self.render_status_bar();
 
         v_flex()
             .id("quaderno-app")
@@ -780,12 +790,14 @@ impl Render for QuadernoApp {
             .on_action(cx.listener(Self::on_new_folder))
             .on_action(cx.listener(Self::on_upload))
             .on_action(cx.listener(Self::on_download))
-            .child(TitleBar::new().child(
-                h_flex().gap_2().child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child("Quaderno4Linux")),
-            ))
+            .child(
+                TitleBar::new().child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().text_sm().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Quaderno4Linux")),
+                ),
+            )
             .child(h_flex().flex_1().min_h_0().child(sidebar).child(explorer))
             .child(status)
-            .children(dialog_layer)
-            .child(toast_layer)
     }
 }

@@ -3,19 +3,21 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{
-    div, prelude::*, px, uniform_list, ClickEvent, Context, ExternalPaths, PathPromptOptions, ScrollStrategy,
-    SharedString, Window,
+use gpui_kit::component::breadcrumb::{Breadcrumb, BreadcrumbItem};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle};
+use gpui_kit::component::separator::Separator;
+use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
+use gpui_kit::component::toolbar::Toolbar;
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme, Disableable, Icon, IconName, Sizable};
+use gpui_kit::{
+    div, prelude::*, px, App, ClickEvent, Context, Div, ExternalPaths, PathPromptOptions, SharedString, Stateful,
+    WeakEntity, Window,
 };
-use gpui_component::breadcrumb::{Breadcrumb, BreadcrumbItem};
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{h_flex, v_flex, ActiveTheme, Disableable, Icon, IconName, Sizable};
 use quaderno_core::{format_date, format_size, DeviceClient, Entry};
 
 use crate::app::actions::*;
 use crate::app::{is_double_click, Clipboard, ClipboardMode, QuadernoApp};
-
-const ROW_HEIGHT: f32 = 32.;
 
 impl QuadernoApp {
     pub fn set_entries(&mut self, mut entries: Vec<Entry>) {
@@ -83,7 +85,9 @@ impl QuadernoApp {
                     this.cursor = None;
                     this.anchor = None;
                     this.set_entries(entries);
-                    this.list_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                    if !this.entries.is_empty() {
+                        this.table.update(cx, |table, cx| table.scroll_to_row(0, cx));
+                    }
                 }
                 Err(e) => this.notify_error("フォルダを開けません", &e, window, cx),
             },
@@ -112,8 +116,8 @@ impl QuadernoApp {
 
     // ----- selection ----------------------------------------------------
 
-    fn click_row(&mut self, ix: usize, ev: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus_handle);
+    pub fn click_row(&mut self, ix: usize, ev: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus_handle, cx);
         if is_double_click(ev) {
             self.open_entry(ix, window, cx);
             return;
@@ -155,7 +159,7 @@ impl QuadernoApp {
         self.cursor = Some(ix);
         self.anchor = Some(ix);
         self.selection = [self.entries[ix].entry_id.clone()].into();
-        self.list_scroll.scroll_to_item(ix, ScrollStrategy::Center);
+        self.table.update(cx, |table, cx| table.scroll_to_row(ix, cx));
         cx.notify();
     }
 
@@ -552,16 +556,12 @@ impl QuadernoApp {
         let can_paste = self.clipboard.is_some();
 
         let btn = |id: &'static str, label: &'static str, icon: IconName, tip: &'static str| {
-            Button::new(id).label(label).icon(icon).small().ghost().tooltip(tip)
+            Button::new(id).label(label).icon(icon).ghost().tooltip(tip)
         };
 
-        h_flex()
-            .gap_1()
-            .px_2()
-            .py_1()
+        let toolbar = Toolbar::new("explorer-toolbar")
+            .small()
             .flex_wrap()
-            .border_b_1()
-            .border_color(cx.theme().border)
             .child(
                 btn("up", "上へ", IconName::ArrowUp, "親フォルダへ (Backspace)")
                     .disabled(!enabled || self.path.len() <= 1)
@@ -572,7 +572,7 @@ impl QuadernoApp {
                     .disabled(!enabled)
                     .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
             )
-            .child(separator(cx))
+            .content(Separator::vertical().h(px(18.)).mx_1())
             .child(
                 btn("upload", "アップロード", IconName::ArrowUp, "ファイルをアップロード (Ctrl+U)")
                     .disabled(!enabled)
@@ -588,7 +588,7 @@ impl QuadernoApp {
                     .disabled(!enabled || !has_sel)
                     .on_click(cx.listener(|this, _, window, cx| this.download(window, cx))),
             )
-            .child(separator(cx))
+            .content(Separator::vertical().h(px(18.)).mx_1())
             .child(
                 btn("new-folder", "新しいフォルダ", IconName::Plus, "フォルダを作成 (Ctrl+Shift+N)")
                     .disabled(!enabled)
@@ -615,15 +615,12 @@ impl QuadernoApp {
                     .on_click(cx.listener(|this, _, window, cx| this.rename(window, cx))),
             )
             .child(
-                Button::new("delete")
-                    .label("削除")
-                    .icon(IconName::Delete)
-                    .small()
-                    .ghost()
-                    .tooltip("削除 (Delete)")
+                btn("delete", "削除", IconName::Delete, "削除 (Delete)")
                     .disabled(!enabled || !has_sel)
                     .on_click(cx.listener(|this, _, window, cx| this.delete(window, cx))),
-            )
+            );
+
+        div().px_2().py_1().border_b_1().border_color(cx.theme().border).child(toolbar)
     }
 
     fn render_breadcrumb(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -642,125 +639,17 @@ impl QuadernoApp {
 
     pub fn render_explorer(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let connected = self.client().is_some();
-        let count = self.entries.len();
 
-        let header = h_flex()
-            .h(px(28.))
-            .px_3()
-            .gap_2()
-            .flex_shrink_0()
-            .bg(theme.table_head)
-            .text_xs()
-            .text_color(theme.muted_foreground)
-            .child(div().flex_1().child("名前"))
-            .child(div().w(px(90.)).text_right().child("サイズ"))
-            .child(div().w(px(60.)).text_right().child("ページ"))
-            .child(div().w(px(140.)).child("更新日時"));
-
-        let body = if !connected {
-            v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .text_color(theme.muted_foreground)
-                .child(Icon::new(IconName::BookOpen).size_8())
-                .child("端末に接続してください")
-                .child(
-                    div()
-                        .text_xs()
-                        .child("USB は「USB で接続」、Bluetooth はペアリング済み端末の「接続」、Wi-Fi は「端末を検索」から接続します"),
-                )
-                .into_any_element()
-        } else if count == 0 {
-            v_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .text_color(theme.muted_foreground)
-                .child("このフォルダは空です (ファイルをドロップしてアップロード)")
-                .into_any_element()
-        } else {
-            uniform_list(
-                "entries",
-                count,
-                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                    let theme = cx.theme();
-                    range
-                        .map(|ix| {
-                            let e = &this.entries[ix];
-                            let selected = this.selection.contains(&e.entry_id);
-                            let cut = this.clipboard.as_ref().is_some_and(|c| {
-                                c.mode == ClipboardMode::Cut && c.entries.iter().any(|x| x.entry_id == e.entry_id)
-                            });
-                            let icon = if e.is_folder() { IconName::Folder } else { IconName::File };
-                            h_flex()
-                                .id(("entry", ix))
-                                .w_full()
-                                .h(px(ROW_HEIGHT))
-                                .px_3()
-                                .gap_2()
-                                .text_sm()
-                                .border_b_1()
-                                .border_color(theme.table_row_border)
-                                .when(ix % 2 == 1, |el| el.bg(theme.table_even))
-                                .when(selected, |el| el.bg(theme.table_active))
-                                .when(!selected, |el| el.hover(|s| s.bg(theme.table_hover)))
-                                .when(cut, |el| el.opacity(0.5))
-                                .child(
-                                    h_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .gap_2()
-                                        .child(Icon::new(icon).small().text_color(if e.is_folder() {
-                                            theme.primary
-                                        } else {
-                                            theme.muted_foreground
-                                        }))
-                                        .child(div().truncate().child(e.entry_name.clone())),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(90.))
-                                        .text_right()
-                                        .text_color(theme.muted_foreground)
-                                        .child(e.file_size.map(format_size).unwrap_or_default()),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(60.))
-                                        .text_right()
-                                        .text_color(theme.muted_foreground)
-                                        .child(e.total_page.map(|p| p.to_string()).unwrap_or_default()),
-                                )
-                                .child(
-                                    div().w(px(140.)).text_color(theme.muted_foreground).child(
-                                        e.modified_date
-                                            .as_deref()
-                                            .or(e.created_date.as_deref())
-                                            .map(format_date)
-                                            .unwrap_or_default(),
-                                    ),
-                                )
-                                .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                                    this.click_row(ix, ev, window, cx)
-                                }))
-                        })
-                        .collect::<Vec<_>>()
-                }),
+        let body = if self.client().is_none() {
+            empty_state(
+                Some(IconName::BookOpen),
+                "端末に接続してください",
+                "USB は「USB で接続」、Bluetooth はペアリング済み端末の「接続」、Wi-Fi は「端末を検索」から接続します",
             )
-            .track_scroll(self.list_scroll.clone())
-            .w_full()
-            .flex_1()
             .into_any_element()
-        };
-
-        let footer = h_flex().px_3().h(px(24.)).text_xs().text_color(theme.muted_foreground).child(if connected {
-            format!("{count} 項目 · {} 件選択", self.selection.len())
         } else {
-            String::new()
-        });
+            DataTable::new(&self.table).bordered(false).stripe(true).into_any_element()
+        };
 
         v_flex()
             .id("explorer")
@@ -769,8 +658,7 @@ impl QuadernoApp {
             .h_full()
             .child(self.render_toolbar(cx))
             .child(self.render_breadcrumb(cx))
-            .child(v_flex().flex_1().min_h_0().child(header).child(body))
-            .child(footer)
+            .child(v_flex().flex_1().min_h_0().child(body))
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(theme.drop_target))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 this.upload_paths(paths.paths().to_vec(), window, cx);
@@ -778,8 +666,113 @@ impl QuadernoApp {
     }
 }
 
-fn separator(cx: &Context<QuadernoApp>) -> impl IntoElement {
-    div().w(px(1.)).h(px(18.)).mx_1().bg(cx.theme().border)
+fn empty_state(icon: Option<IconName>, title: &'static str, description: &'static str) -> Empty {
+    let header = EmptyHeader::new()
+        .title(EmptyTitle::new().child(title))
+        .description(EmptyDescription::new().child(description));
+    let header = match icon {
+        Some(icon) => header.media(EmptyMedia::new().with_variant(EmptyMediaVariant::Icon).child(Icon::new(icon))),
+        None => header,
+    };
+    Empty::new().size_full().header(header)
+}
+
+/// Rows of the file list. The entries and the selection stay in [`QuadernoApp`]; this
+/// only reads them, so the table supports the app's own multi-selection.
+pub struct EntryTable {
+    app: WeakEntity<QuadernoApp>,
+}
+
+impl EntryTable {
+    pub fn new(app: WeakEntity<QuadernoApp>) -> Self {
+        Self { app }
+    }
+}
+
+impl TableDelegate for EntryTable {
+    fn columns_count(&self, _: &App) -> usize {
+        4
+    }
+
+    fn rows_count(&self, cx: &App) -> usize {
+        self.app.upgrade().map_or(0, |app| app.read(cx).entries.len())
+    }
+
+    fn column(&self, col_ix: usize, _: &App) -> Column {
+        match col_ix {
+            0 => Column::new("name", "名前").width(px(380.)).min_width(px(120.)),
+            1 => Column::new("size", "サイズ").width(px(90.)).text_right(),
+            2 => Column::new("pages", "ページ").width(px(70.)).text_right(),
+            _ => Column::new("modified", "更新日時").width(px(150.)),
+        }
+    }
+
+    fn render_tr(&mut self, row_ix: usize, _: &mut Window, cx: &mut Context<TableState<Self>>) -> Stateful<Div> {
+        let row = div().id(("entry", row_ix));
+        let Some(app) = self.app.upgrade() else { return row };
+        let (selected, cut) = {
+            let this = app.read(cx);
+            match this.entries.get(row_ix) {
+                Some(e) => (
+                    this.selection.contains(&e.entry_id),
+                    this.clipboard.as_ref().is_some_and(|c| {
+                        c.mode == ClipboardMode::Cut && c.entries.iter().any(|x| x.entry_id == e.entry_id)
+                    }),
+                ),
+                None => (false, false),
+            }
+        };
+        row.when(selected, |el| el.bg(cx.theme().table_active))
+            .when(cut, |el| el.opacity(0.5))
+            .on_click(move |ev, window, cx| app.update(cx, |this, cx| this.click_row(row_ix, ev, window, cx)))
+    }
+
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let Some(e) = self.app.upgrade().and_then(|app| app.read(cx).entries.get(row_ix).cloned()) else {
+            return div().into_any_element();
+        };
+        let muted = cx.theme().muted_foreground;
+        match col_ix {
+            0 => {
+                let (icon, color) =
+                    if e.is_folder() { (IconName::Folder, cx.theme().primary) } else { (IconName::File, muted) };
+                h_flex()
+                    .min_w_0()
+                    .gap_2()
+                    .child(Icon::new(icon).small().text_color(color))
+                    .child(div().truncate().child(e.entry_name))
+                    .into_any_element()
+            }
+            1 => div().text_color(muted).child(e.file_size.map(format_size).unwrap_or_default()).into_any_element(),
+            2 => div()
+                .text_color(muted)
+                .child(e.total_page.map(|p| p.to_string()).unwrap_or_default())
+                .into_any_element(),
+            _ => div()
+                .text_color(muted)
+                .child(e.modified_date.as_deref().or(e.created_date.as_deref()).map(format_date).unwrap_or_default())
+                .into_any_element(),
+        }
+    }
+
+    fn cell_label(&self, row_ix: usize, col_ix: usize, cx: &App) -> Option<SharedString> {
+        let app = self.app.upgrade()?;
+        let e = app.read(cx).entries.get(row_ix)?;
+        match col_ix {
+            0 => Some(e.entry_name.clone().into()),
+            _ => None,
+        }
+    }
+
+    fn render_empty(&mut self, _: &mut Window, _: &mut Context<TableState<Self>>) -> impl IntoElement {
+        empty_state(Some(IconName::Inbox), "このフォルダは空です", "ファイルをドロップしてアップロードできます")
+    }
 }
 
 /// Returns `name` or, if taken, `name (コピー)`, `name (コピー 2)`, ... (keeping the extension).
