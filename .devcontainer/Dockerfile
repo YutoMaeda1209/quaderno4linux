@@ -19,5 +19,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # リリースを .deb と .rpm にパッケージするツール。
+# cargo-about は依存クレートのライセンス一覧を生成する。
 RUN cargo install --locked cargo-deb@3.8.0 cargo-generate-rpm@0.21.1 \
+  && cargo install --locked --features cli cargo-about@0.9.3 \
   && rm -rf /usr/local/cargo/registry

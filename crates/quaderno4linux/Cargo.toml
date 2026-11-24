@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 quaderno-core.workspace = true
@@ -33,6 +34,8 @@ assets = [
     ["../../packaging/linux/70-quaderno.rules", "usr/lib/udev/rules.d/", "644"],
     ["../../packaging/linux/io.github.yutomaeda1209.quaderno4linux.desktop", "usr/share/applications/", "644"],
     ["../../README.md", "usr/share/doc/quaderno4linux/", "644"],
+    # リリースのワークフローが cargo-about で生成する。
+    ["target/release/THIRD_PARTY_LICENSES.html", "usr/share/doc/quaderno4linux/", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -54,6 +57,8 @@ assets = [
     { source = "packaging/linux/io.github.yutomaeda1209.quaderno4linux.desktop", dest = "/usr/share/applications/io.github.yutomaeda1209.quaderno4linux.desktop", mode = "644" },
     { source = "README.md", dest = "/usr/share/doc/quaderno4linux/README.md", mode = "644", doc = true },
     { source = "LICENSE", dest = "/usr/share/licenses/quaderno4linux/LICENSE", mode = "644", doc = true },
+    # リリースのワークフローが cargo-about で生成する。
+    { source = "target/release/THIRD_PARTY_LICENSES.html", dest = "/usr/share/licenses/quaderno4linux/THIRD_PARTY_LICENSES.html", mode = "644", doc = true },
 ]
 
 [package.metadata.generate-rpm.requires]

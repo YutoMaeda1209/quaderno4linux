@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quaderno4Linux – Third-party licenses</title>
+<style>
+  body { font-family: sans-serif; max-width: 960px; margin: 2em auto; padding: 0 1em; color: #222; }
+  h2 { margin-top: 2em; border-bottom: 1px solid #ddd; }
+  .used-by { columns: 3; font-size: 0.9em; }
+  pre { background: #f6f6f6; padding: 1em; white-space: pre-wrap; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<h1>Third-party licenses</h1>
+<p>Quaderno4Linux includes the following open source software.</p>
+<h2>Overview</h2>
+<ul>
+{{#each overview}}
+  <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}
+</ul>
+{{!-- 同じライセンスでも著作権表示が違えば別のセクションになるので、id はその種類の最初のセクションにだけ付ける。 --}}
+{{#each licenses}}
+<h2{{#if first_of_kind}} id="{{id}}"{{/if}}>{{name}}</h2>
+<p>Used by:</p>
+<ul class="used-by">
+{{#each used_by}}
+  <li><a href="{{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}}">{{crate.name}} {{crate.version}}</a></li>
+{{/each}}
+</ul>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>

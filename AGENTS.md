@@ -14,6 +14,8 @@ Rust と GPUI Kit で実装しています。機能や使い方は [README.md](R
   - `tasks.rs`: バックグラウンド処理
 - `crates/quaderno-mock`: 開発とテスト用のモック端末。E2E テスト (`tests/end_to_end.rs`) もここにある
 - `packaging/linux`: udev ルールとデスクトップエントリ
+- `packaging/licenses`: 依存クレートのライセンス一覧 (`THIRD_PARTY_LICENSES.html`) を生成する cargo-about の設定とテンプレート。\
+  リリースのワークフローで生成し、deb / rpm に同梱する
 
 プロトコルの変更は `quaderno-core` に入れ、必要ならモック端末も合わせて更新してください。
 

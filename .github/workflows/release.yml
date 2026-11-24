@@ -44,6 +44,9 @@ jobs:
             set -e
             cargo test --workspace
             cargo build --release -p quaderno4linux
+            cargo about generate -m crates/quaderno4linux/Cargo.toml \
+              -c packaging/licenses/about.toml packaging/licenses/about.hbs \
+              -o target/release/THIRD_PARTY_LICENSES.html
             cargo deb -p quaderno4linux --no-build
             cargo generate-rpm -p crates/quaderno4linux
       - name: Write checksums
