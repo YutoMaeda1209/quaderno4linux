@@ -195,36 +195,20 @@ impl DeviceClient {
 
     /// 文書、またはフォルダ (再帰的に) を削除する。
     pub fn delete(&self, entry: &Entry) -> Result<()> {
-        let path = if entry.is_folder() {
-            format!("/folders/{}", urlencoding::encode(&entry.entry_id))
-        } else {
-            format!("/documents/{}", urlencoding::encode(&entry.entry_id))
-        };
-        self.send(Method::DELETE, &path, |r| Ok(r.timeout(Duration::from_secs(120))))?;
+        self.send(Method::DELETE, &entry_api_path(entry), |r| Ok(r.timeout(Duration::from_secs(120))))?;
         Ok(())
     }
 
     /// 項目の名前をその場で変更する。
     pub fn rename(&self, entry: &Entry, new_name: &str) -> Result<()> {
-        if entry.is_folder() {
-            let body = json!({ "folder_name": new_name });
-            self.send_json(Method::PUT, &format!("/folders/{}", urlencoding::encode(&entry.entry_id)), body)?;
-        } else {
-            let body = json!({ "file_name": new_name });
-            self.send_json(Method::PUT, &format!("/documents/{}", urlencoding::encode(&entry.entry_id)), body)?;
-        }
+        self.send_json(Method::PUT, &entry_api_path(entry), json!({ name_key(entry): new_name }))?;
         Ok(())
     }
 
     /// 項目を (名前はそのままで) `dest_folder_id` に移動する。
     pub fn move_to(&self, entry: &Entry, dest_folder_id: &str) -> Result<()> {
-        if entry.is_folder() {
-            let body = json!({ "folder_name": entry.entry_name, "parent_folder_id": dest_folder_id });
-            self.send_json(Method::PUT, &format!("/folders/{}", urlencoding::encode(&entry.entry_id)), body)?;
-        } else {
-            let body = json!({ "file_name": entry.entry_name, "parent_folder_id": dest_folder_id });
-            self.send_json(Method::PUT, &format!("/documents/{}", urlencoding::encode(&entry.entry_id)), body)?;
-        }
+        let body = json!({ name_key(entry): entry.entry_name, "parent_folder_id": dest_folder_id });
+        self.send_json(Method::PUT, &entry_api_path(entry), body)?;
         Ok(())
     }
 
@@ -239,7 +223,7 @@ impl DeviceClient {
             }
         } else {
             let body = json!({ "parent_folder_id": dest_folder_id, "file_name": name });
-            self.send_json(Method::POST, &format!("/documents/{}/copy", urlencoding::encode(&entry.entry_id)), body)?;
+            self.send_json(Method::POST, &format!("{}/copy", entry_api_path(entry)), body)?;
         }
         Ok(())
     }
@@ -261,9 +245,9 @@ impl DeviceClient {
 
         let body = json!({ "file_name": name, "parent_folder_id": parent_id, "document_source": "" });
         let created: Created = self.send_json(Method::POST, "/documents2", body)?.json()?;
-        let path = format!("/documents/{}/file", urlencoding::encode(&created.document_id));
+        let document_path = document_api_path(&created.document_id);
 
-        let result = self.send(Method::PUT, &path, |r| {
+        let result = self.send(Method::PUT, &format!("{document_path}/file"), |r| {
             let reader = ProgressReader { inner: File::open(local)?, done: 0, total, progress: progress.clone() };
             let part = multipart::Part::reader_with_length(reader, total)
                 .file_name(name.clone())
@@ -272,7 +256,7 @@ impl DeviceClient {
         });
         if let Err(e) = result {
             // 再試行で競合しないよう、空のプレースホルダー文書を削除する。
-            let _ = self.send(Method::DELETE, &format!("/documents/{}", created.document_id), Ok);
+            let _ = self.send(Method::DELETE, &document_path, Ok);
             return Err(e);
         }
         Ok(created.document_id)
@@ -299,8 +283,7 @@ impl DeviceClient {
 
     /// 文書を `dest` (ファイルパス) にダウンロードする。
     pub fn download_document(&self, document_id: &str, dest: &Path, progress: &Progress) -> Result<()> {
-        let path = format!("/documents/{}/file", urlencoding::encode(document_id));
-        let mut resp = self.send(Method::GET, &path, Ok)?;
+        let mut resp = self.send(Method::GET, &format!("{}/file", document_api_path(document_id)), Ok)?;
         let total = resp.content_length().unwrap_or(0);
         let tmp = dest.with_extension("part");
         let mut out = File::create(&tmp)?;
@@ -338,6 +321,28 @@ impl DeviceClient {
     /// ルートフォルダを列挙する (簡便のため)。
     pub fn list_root(&self) -> Result<Vec<Entry>> {
         self.list_folder(ROOT_FOLDER_ID)
+    }
+}
+
+fn document_api_path(document_id: &str) -> String {
+    format!("/documents/{}", urlencoding::encode(document_id))
+}
+
+/// 項目の種類に応じた API のパス (`/folders/{id}` または `/documents/{id}`)。
+fn entry_api_path(entry: &Entry) -> String {
+    if entry.is_folder() {
+        format!("/folders/{}", urlencoding::encode(&entry.entry_id))
+    } else {
+        document_api_path(&entry.entry_id)
+    }
+}
+
+/// 名前の変更や移動のリクエストで、項目の名前を渡すキー。
+fn name_key(entry: &Entry) -> &'static str {
+    if entry.is_folder() {
+        "folder_name"
+    } else {
+        "file_name"
     }
 }
 
