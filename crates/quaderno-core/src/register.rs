@@ -22,7 +22,7 @@ use serde_json::json;
 
 use crate::address::DeviceAddress;
 use crate::credentials::Credentials;
-use crate::crypto::{normalize_dh, random_bytes, DiffieHellman, SessionKeys, DH_LEN};
+use crate::crypto::{normalize_dh, random_bytes, DiffieHellman, SessionKeys};
 use crate::error::{Error, Result};
 use crate::http::{build_client, check, http_url};
 
@@ -56,7 +56,8 @@ pub struct Registration {
     n1: Vec<u8>,
     n2: [u8; 16],
     ya: Vec<u8>,
-    yb: [u8; DH_LEN],
+    /// Device public key exactly as received (may carry a leading 0x00 sign byte).
+    yb: Vec<u8>,
     e_hash: Vec<u8>,
     m3_hmac: Vec<u8>,
 }
@@ -70,13 +71,16 @@ impl Registration {
         let m1: Msg = check(http.post(http_url("/register/pin")).send()?)?.json()?;
         let n1 = field(&m1.a, "a")?;
         let mac = field(&m1.b, "b")?;
-        let yb = normalize_dh(&field(&m1.c, "c")?)?;
+        // YB must enter the HMACs exactly as sent: the device serialises it with Java's
+        // BigInteger.toByteArray(), which may prepend 0x00 (257 bytes). Re-padding to
+        // 256 bytes makes the device reject the exchange with 403.
+        let yb = field(&m1.c, "c")?;
 
         let n2: [u8; 16] = random_bytes();
         let dh = DiffieHellman::new();
         let mut ya = vec![0u8];
         ya.extend_from_slice(&dh.public_key());
-        let zz = dh.shared_secret(&yb)?;
+        let zz = dh.shared_secret(&normalize_dh(&yb)?)?;
 
         let salt = [n1.as_slice(), &mac, &n2].concat();
         let keys = SessionKeys::derive(&zz, &salt);

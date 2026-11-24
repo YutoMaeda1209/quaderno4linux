@@ -4,7 +4,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     /// The device answered with an error document (`{"error_code": "...", "message": "..."}`).
-    #[error("デバイスエラー {code}: {message}")]
+    #[error("デバイスエラー {code}: {message}{}", device_hint(code))]
     Device { status: u16, code: String, message: String },
 
     #[error("通信エラー: {0}")]
@@ -31,6 +31,9 @@ pub enum Error {
     #[error("USB エラー: {0}")]
     Usb(String),
 
+    #[error("Bluetooth エラー: {0}")]
+    Bluetooth(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -43,6 +46,17 @@ impl Error {
             Error::Http(e) => e.status().map(|s| s.as_u16()),
             _ => None,
         }
+    }
+}
+
+/// Explanation for documented device error codes (`<HTTP status><2 digits>`).
+fn device_hint(code: &str) -> &'static str {
+    match code {
+        "40007" => " (同じ名前の項目が既に存在します)",
+        "40100" => " (認証が必要です)",
+        "40304" => " (端末の Wi-Fi がオフです)",
+        "40401" => " (対象が見つかりません)",
+        _ => "",
     }
 }
 

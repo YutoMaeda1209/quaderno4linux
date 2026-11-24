@@ -27,6 +27,9 @@ type Resp = Response<std::io::Cursor<Vec<u8>>>;
 enum Kind {
     Folder,
     Document(Vec<u8>),
+    /// Created by `POST /documents2` before a file is uploaded. Frames are hidden
+    /// from listings and only conflict on name once a file is uploaded.
+    Frame,
 }
 
 #[derive(Clone)]
@@ -44,7 +47,8 @@ struct Pairing {
     dh: DiffieHellman,
     n1: [u8; 16],
     mac: [u8; 6],
-    yb: [u8; 256],
+    /// Public key as sent on the wire (Java `BigInteger.toByteArray()` form).
+    yb: Vec<u8>,
     keys: Option<SessionKeys>,
     n2: Vec<u8>,
     ya: Vec<u8>,
@@ -167,7 +171,7 @@ impl MockDevice {
             .values()
             .filter_map(|n| match &n.kind {
                 Kind::Document(d) => Some((s.path_of(&n.id), d.clone())),
-                Kind::Folder => None,
+                Kind::Folder | Kind::Frame => None,
             })
             .collect()
     }
@@ -229,6 +233,10 @@ impl State {
         }
         match &n.kind {
             Kind::Folder => v["entry_type"] = json!("folder"),
+            Kind::Frame => {
+                v["entry_type"] = json!("document");
+                v["file_size"] = json!("0");
+            }
             Kind::Document(data) => {
                 v["entry_type"] = json!("document");
                 v["file_size"] = json!(data.len().to_string());
@@ -243,7 +251,7 @@ impl State {
     }
 
     fn children(&self, id: &str) -> Vec<&Node> {
-        self.nodes.values().filter(|n| n.parent.as_deref() == Some(id)).collect()
+        self.nodes.values().filter(|n| n.parent.as_deref() == Some(id) && !matches!(n.kind, Kind::Frame)).collect()
     }
 
     fn name_taken(&self, parent: &str, name: &str, except: Option<&str>) -> bool {
@@ -330,7 +338,7 @@ fn register(state: &Arc<Mutex<State>>, method: &Method, path: &str, body: &[u8])
         }
         (Method::Post, "/register/pin") => {
             let dh = DiffieHellman::new();
-            let yb = dh.public_key();
+            let yb = java_bytes(&dh.public_key());
             let p = Pairing {
                 dh,
                 n1: random_bytes(),
@@ -347,10 +355,7 @@ fn register(state: &Arc<Mutex<State>>, method: &Method, path: &str, body: &[u8])
                 wrapped_es_cert: Vec::new(),
                 m5_hmac: [0; 32],
             };
-            // The real device sometimes prefixes a 0x00 sign byte.
-            let mut yb_wire = vec![0u8];
-            yb_wire.extend_from_slice(&yb);
-            let resp = json!({ "a": b64(&p.n1), "b": b64(&p.mac), "c": b64(&yb_wire) });
+            let resp = json!({ "a": b64(&p.n1), "b": b64(&p.mac), "c": b64(&p.yb) });
             println!("[mock] PIN: {}", s.pin);
             s.pairing = Some(p);
             json_resp(200, resp)
@@ -363,7 +368,10 @@ fn register(state: &Arc<Mutex<State>>, method: &Method, path: &str, body: &[u8])
             anyhow::ensure!(n1 == p.n1 && mac == p.mac, "nonce/mac mismatch");
             let zz = p.dh.shared_secret(&normalize_dh(&ya)?)?;
             let keys = SessionKeys::derive(&zz, &[n1.as_slice(), &mac, &n2].concat());
-            anyhow::ensure!(keys.hmac(&[&n1, &mac, &p.yb, &n1, &n2, &mac, &ya])[..] == m2[..], "M2 HMAC mismatch");
+            // Like the device, HMAC over YB exactly as it was sent.
+            if keys.hmac(&[&n1, &mac, &p.yb, &n1, &n2, &mac, &ya])[..] != m2[..] {
+                return Ok(err(403, "40300", "Bad parameters for registration process"));
+            }
             p.psk = keys.hmac(&[pin.as_bytes()]);
             p.e_hash = keys.hmac(&[&p.es, &p.psk, &p.yb, &ya]);
             p.m3_hmac = keys.hmac(&[&n1, &n2, &mac, &ya, &m2, &n2, &p.e_hash]);
@@ -493,10 +501,12 @@ fn api(
             let list: Vec<Value> = s.children(id).iter().map(|n| s.entry_json(n)).collect();
             json_resp(200, json!({ "count": list.len().to_string(), "entry_list": list }))
         }
-        (Method::Get, ["resolve", "entry", "path", p]) => match s.nodes.values().find(|n| s.path_of(&n.id) == *p) {
-            Some(n) => json_resp(200, s.entry_json(n)),
-            None => err(404, "40401", "not found"),
-        },
+        (Method::Get, ["resolve", "entry", "path", p]) => {
+            match s.nodes.values().find(|n| !matches!(n.kind, Kind::Frame) && s.path_of(&n.id) == *p) {
+                Some(n) => json_resp(200, s.entry_json(n)),
+                None => err(404, "40401", "not found"),
+            }
+        }
         (Method::Post, ["folders2"]) | (Method::Post, ["folders"]) => {
             let v = body_json()?;
             let name = v["folder_name"].as_str().context("folder_name")?.to_string();
@@ -505,7 +515,7 @@ fn api(
                 return Ok(err(404, "40401", "parent not found"));
             }
             if s.name_taken(&parent, &name, None) {
-                return Ok(err(409, "40902", "folder already exists"));
+                return Ok(err(400, "40007", "folderName already exists"));
             }
             let id = s.new_id();
             s.nodes.insert(
@@ -538,7 +548,7 @@ fn api(
                 return Ok(err(400, "40003", "invalid destination"));
             }
             if s.name_taken(&parent, &name, Some(id)) {
-                return Ok(err(409, "40901", "name already exists"));
+                return Ok(err(400, "40007", "name already exists"));
             }
             let n = s.nodes.get_mut(*id).unwrap();
             n.name = name;
@@ -560,20 +570,15 @@ fn api(
             if !s.is_folder(&parent) {
                 return Ok(err(404, "40401", "parent not found"));
             }
-            if s.name_taken(&parent, &name, None) {
-                return Ok(err(409, "40901", "document already exists"));
-            }
+            // A new frame replaces an older frame of the same name; real documents
+            // only conflict when the file is uploaded.
+            s.nodes.retain(|_, n| {
+                !(matches!(n.kind, Kind::Frame) && n.name == name && n.parent.as_deref() == Some(&parent))
+            });
             let id = s.new_id();
             s.nodes.insert(
                 id.clone(),
-                Node {
-                    id: id.clone(),
-                    name,
-                    parent: Some(parent),
-                    kind: Kind::Document(Vec::new()),
-                    created: now(),
-                    modified: now(),
-                },
+                Node { id: id.clone(), name, parent: Some(parent), kind: Kind::Frame, created: now(), modified: now() },
             );
             json_resp(200, json!({ "document_id": id }))
         }
@@ -581,13 +586,17 @@ fn api(
             let ct = header("content-type").unwrap_or_default();
             let data = parse_multipart(&ct, body).context("multipart")?;
             let len = data.len();
-            match s.nodes.get_mut(*id) {
-                Some(n @ Node { kind: Kind::Document(_), .. }) => {
-                    n.kind = Kind::Document(data);
-                    n.modified = now();
+            let Some(node) = s.nodes.get(*id).cloned() else { return Ok(err(404, "40401", "not found")) };
+            match node.kind {
+                Kind::Folder => return Ok(err(404, "40401", "not found")),
+                Kind::Frame if s.name_taken(node.parent.as_deref().unwrap_or("root"), &node.name, Some(id)) => {
+                    return Ok(err(400, "40007", "fileName already exists"));
                 }
-                _ => return Ok(err(404, "40401", "not found")),
+                _ => {}
             }
+            let n = s.nodes.get_mut(*id).unwrap();
+            n.kind = Kind::Document(data);
+            n.modified = now();
             json_resp(
                 200,
                 json!({ "completed": "true", "received_bytes": len.to_string(), "current_bytes": len.to_string() }),
@@ -613,7 +622,7 @@ fn api(
                 return Ok(err(404, "40401", "parent not found"));
             }
             if s.name_taken(&parent, &name, None) {
-                return Ok(err(409, "40901", "document already exists"));
+                return Ok(err(400, "40007", "fileName already exists"));
             }
             let new_id = s.new_id();
             s.nodes.insert(
@@ -645,4 +654,16 @@ fn parse_multipart(content_type: &str, body: &[u8]) -> Option<Vec<u8>> {
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Minimal two's-complement big-endian encoding, like Java's `BigInteger.toByteArray()`:
+/// a 0x00 byte is prepended when the top bit is set (257 bytes for most keys).
+fn java_bytes(n: &[u8]) -> Vec<u8> {
+    let start = n.iter().position(|&b| b != 0).unwrap_or(n.len() - 1);
+    let mut out = Vec::with_capacity(n.len() + 1);
+    if n[start] & 0x80 != 0 {
+        out.push(0);
+    }
+    out.extend_from_slice(&n[start..]);
+    out
 }
