@@ -31,6 +31,9 @@ pub enum Error {
     #[error("USB エラー: {0}")]
     Usb(String),
 
+    #[error("USB エラー: {} を開く権限がありません", .0.display())]
+    UsbPermission(std::path::PathBuf),
+
     #[error("Bluetooth エラー: {0}")]
     Bluetooth(String),
 

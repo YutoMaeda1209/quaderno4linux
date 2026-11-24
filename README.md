@@ -58,7 +58,8 @@ cargo build --release
 ### USB 接続のための設定 (初回のみ)
 
 USB モードの切り替えには端末のシリアルポート (`/dev/ttyACM*`) への書き込み権限が必要です。
-同梱の udev ルールをインストールするか、ユーザーを `dialout` グループに追加してください。
+権限がない状態で「USB で接続」を押すと、アプリが同梱の udev ルールを `/etc/udev/rules.d/70-quaderno.rules` にインストールするか確認します
+(管理者パスワードを求められます。polkit の `pkexec` を使います)。手動でインストールする場合は次のとおりです。
 
 ```sh
 sudo cp packaging/linux/70-quaderno.rules /etc/udev/rules.d/

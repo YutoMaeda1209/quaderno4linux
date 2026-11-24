@@ -10,6 +10,7 @@ use std::io::Write;
 use std::os::fd::AsFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use nix::sys::termios::{self, SetArg};
 
@@ -20,6 +21,10 @@ pub const VENDOR_ID: &str = "04c5";
 pub const PRODUCT_ID_SERIAL: &str = "1656";
 /// Product id while in USB Ethernet mode.
 pub const PRODUCT_ID_ETHERNET: &str = "1657";
+
+/// udev rule that grants the logged-in user access to the serial port.
+pub const UDEV_RULE: &str = include_str!("../../../packaging/linux/70-quaderno.rules");
+pub const UDEV_RULE_PATH: &str = "/etc/udev/rules.d/70-quaderno.rules";
 
 /// USB Ethernet flavour to switch to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,17 +113,10 @@ pub fn find_network_interfaces() -> Vec<UsbInterface> {
 
 /// Sends the mode-switch command to a serial port.
 pub fn switch_to_ethernet(port: &Path, mode: UsbNetMode) -> Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(nix::libc::O_NOCTTY)
-        .open(port)
-        .map_err(|e| {
+    let mut file =
+        fs::OpenOptions::new().read(true).write(true).custom_flags(nix::libc::O_NOCTTY).open(port).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
-                Error::Usb(format!(
-                    "{} を開く権限がありません。dialout グループに参加するか、同梱の udev ルールをインストールしてください",
-                    port.display()
-                ))
+                Error::UsbPermission(port.to_path_buf())
             } else {
                 Error::Usb(format!("{} を開けません: {e}", port.display()))
             }
@@ -131,6 +129,43 @@ pub fn switch_to_ethernet(port: &Path, mode: UsbNetMode) -> Result<()> {
     file.flush()?;
     termios::tcdrain(file.as_fd()).map_err(|e| Error::Usb(e.to_string()))?;
     Ok(())
+}
+
+/// `true` when the bundled udev rule is installed with the current contents.
+pub fn udev_rule_installed() -> bool {
+    fs::read_to_string(UDEV_RULE_PATH).is_ok_and(|s| s == UDEV_RULE)
+}
+
+/// Installs the bundled udev rule through `pkexec` (the desktop's polkit agent
+/// asks for the administrator password) and re-applies it to attached devices.
+pub fn install_udev_rule() -> Result<()> {
+    // The rule is fed through stdin so no temporary file readable by root is needed.
+    let script = format!(
+        "set -e; umask 022; cat > {UDEV_RULE_PATH}; udevadm control --reload; \
+         if [ $# -gt 0 ]; then udevadm trigger --settle --action=change \"$@\"; fi"
+    );
+    let mut child = Command::new("pkexec")
+        .args(["/bin/sh", "-c", &script, "sh"])
+        .args(find_serial_ports())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Usb(format!("pkexec を実行できません: {e}")))?;
+    child.stdin.take().expect("piped stdin").write_all(UDEV_RULE.as_bytes())?;
+    let output = child.wait_with_output()?;
+    match output.status.code() {
+        Some(0) => Ok(()),
+        // pkexec: 126 = the dialog was dismissed, 127 = not authorized or no polkit agent.
+        Some(126) => Err(Error::Usb("udev ルールのインストールがキャンセルされました".into())),
+        Some(127) => Err(Error::Usb(
+            "管理者権限を取得できませんでした (polkit エージェントが動作しているか確認してください)".into(),
+        )),
+        _ => Err(Error::Usb(format!(
+            "udev ルールをインストールできませんでした: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))),
+    }
 }
 
 /// Current USB state of attached devices.

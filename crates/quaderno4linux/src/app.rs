@@ -243,8 +243,50 @@ impl QuadernoApp {
                 }
                 Err(e) => {
                     this.usb_state = usb::scan();
-                    this.notify_error(format!("USB 接続に失敗しました: {e:#}"), window, cx);
+                    if matches!(e.downcast_ref::<Error>(), Some(Error::UsbPermission(_))) {
+                        this.offer_udev_rule_install(e, window, cx);
+                    } else {
+                        this.notify_error(format!("USB 接続に失敗しました: {e:#}"), window, cx);
+                    }
                 }
+            },
+        );
+    }
+
+    /// Offers to install the udev rule that lets the user open the serial port,
+    /// then retries the USB connection.
+    fn offer_udev_rule_install(&mut self, e: anyhow::Error, window: &mut Window, cx: &mut Context<Self>) {
+        if usb::udev_rule_installed() {
+            // The rule only applies to users logged in on the local seat.
+            self.notify_error(
+                format!("USB 接続に失敗しました: {e:#}。udev ルールはインストール済みです。端末を挿し直すか、dialout グループに参加してください"),
+                window,
+                cx,
+            );
+            return;
+        }
+        self.push_log(format!("{e:#}"));
+        self.confirm(
+            "USB 接続の設定",
+            "USB で接続するには、端末のシリアルポートへのアクセスを許可する udev ルール (/etc/udev/rules.d/70-quaderno.rules) をインストールする必要があります。管理者パスワードの入力を求められます。この設定は初回のみ必要です。",
+            "インストール",
+            false,
+            window,
+            cx,
+            |this, window, cx| {
+                this.run_task(
+                    "udev ルールをインストールしています",
+                    window,
+                    cx,
+                    |_| Ok(usb::install_udev_rule()?),
+                    |this, result, window, cx| match result {
+                        Ok(()) => {
+                            this.notify_success("udev ルールをインストールしました", window, cx);
+                            this.connect_usb(window, cx);
+                        }
+                        Err(e) => this.notify_error(format!("{e:#}"), window, cx),
+                    },
+                );
             },
         );
     }
