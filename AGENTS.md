@@ -59,7 +59,8 @@ cargo test --workspace
 - ユーザーへの通知は `notify_error` / `notify_warning` / `notify_success` を使います。\
   エラー通知には要約だけを出し、詳細 (`detail`) はログファイルに送ります。
 - 確認や入力のダイアログは `confirm` / `prompt_text` (`dialogs.rs`) を使います。
-- UI の文言は日本語、コードのコメントは英語です。
+- UI の文言は日本語です。
+- コメントは [CONTRIBUTING.md](.github/CONTRIBUTING.md) の「コードについて」に従って書いてください。
 - `packaging/linux/70-quaderno.rules` はアプリに埋め込まれて (`include_str!`) インストールされます。\
   変更するとアプリの挙動も変わります。
 - `rust-embed` の `debug-embed` は外さないでください。\

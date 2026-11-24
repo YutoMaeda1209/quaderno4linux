@@ -14,6 +14,10 @@ Issue 単位で作業を進める方法です。\
 - プルリクエストを作成する際は、必ず Issue とリンクさせてください。\
   プルリクエストと Issue の紐付け方法については[公式ドキュメント](https://docs.github.com/ja/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)を参照してください。
 
+## コードについて
+
+- プログラムのコメントは日本語で記述してください。
+
 ## コミットについて
 
 - 1 コミットにつき 1 つの機能追加またはバグ修正だけを含めてください。
