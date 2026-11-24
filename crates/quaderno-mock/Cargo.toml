@@ -3,6 +3,7 @@ name = "quaderno-mock"
 description = "A simulated Quaderno device for development and tests (no hardware required)"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]

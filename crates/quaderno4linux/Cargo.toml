@@ -3,6 +3,7 @@ name = "quaderno4linux"
 description = "Desktop manager for Fujitsu Quaderno on Linux"
 version.workspace = true
 edition.workspace = true
+repository.workspace = true
 
 [dependencies]
 quaderno-core.workspace = true
