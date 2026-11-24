@@ -62,7 +62,7 @@ impl QuadernoApp {
                         *status = new_status;
                     }
                 }
-                Err(e) => this.notify_error(format!("フォルダを読み込めません: {e:#}"), window, cx),
+                Err(e) => this.notify_error("フォルダを読み込めません", &e, window, cx),
             },
         );
     }
@@ -85,7 +85,7 @@ impl QuadernoApp {
                     this.set_entries(entries);
                     this.list_scroll.scroll_to_item(0, ScrollStrategy::Top);
                 }
-                Err(e) => this.notify_error(format!("フォルダを開けません: {e:#}"), window, cx),
+                Err(e) => this.notify_error("フォルダを開けません", &e, window, cx),
             },
         );
     }
@@ -191,7 +191,7 @@ impl QuadernoApp {
                             }
                             this.notify_success(format!("フォルダ「{name}」を作成しました"), window, cx);
                         }
-                        Err(e) => this.notify_error(format!("フォルダを作成できません: {e:#}"), window, cx),
+                        Err(e) => this.notify_error("フォルダを作成できません", &e, window, cx),
                     },
                 );
             },
@@ -233,7 +233,7 @@ impl QuadernoApp {
                             this.set_entries(entries);
                             this.notify_success(format!("「{name}」に名前を変更しました"), window, cx);
                         }
-                        Err(e) => this.notify_error(format!("名前を変更できません: {e:#}"), window, cx),
+                        Err(e) => this.notify_error("名前を変更できません", &e, window, cx),
                     },
                 );
             },
@@ -277,7 +277,7 @@ impl QuadernoApp {
                         this.notify_success(format!("{n} 件を削除しました"), window, cx);
                     }
                     Err(e) => {
-                        this.notify_error(format!("削除できません: {e:#}"), window, cx);
+                        this.notify_error("削除できません", &e, window, cx);
                         this.refresh(window, cx);
                     }
                 },
@@ -308,7 +308,7 @@ impl QuadernoApp {
         let ancestors: Vec<&str> = self.path.iter().map(|p| p.0.as_str()).collect();
         if let Some(bad) = clip.entries.iter().find(|e| e.is_folder() && ancestors.contains(&e.entry_id.as_str())) {
             let msg = format!("フォルダ「{}」をそれ自身の中に貼り付けることはできません", bad.entry_name);
-            self.notify_error(msg, window, cx);
+            self.notify_warning(msg, window, cx);
             return;
         }
         let mode = clip.mode;
@@ -350,7 +350,7 @@ impl QuadernoApp {
                     this.notify_success(format!("{n} 件を{verb}しました"), window, cx);
                 }
                 Err(e) => {
-                    this.notify_error(format!("貼り付けに失敗しました: {e:#}"), window, cx);
+                    this.notify_error("貼り付けに失敗しました", &e, window, cx);
                     this.refresh(window, cx);
                 }
             },
@@ -418,7 +418,7 @@ impl QuadernoApp {
                     this.notify_success(format!("{n} 件をアップロードしました"), window, cx);
                 }
                 Err(e) => {
-                    this.notify_error(format!("アップロードに失敗しました: {e:#}"), window, cx);
+                    this.notify_error("アップロードに失敗しました", &e, window, cx);
                     this.refresh(window, cx);
                 }
             },
@@ -458,9 +458,10 @@ impl QuadernoApp {
 
     fn notify_file_dialog_error(&mut self, e: anyhow::Error, window: &mut Window, cx: &mut Context<Self>) {
         self.notify_error(
+            "ファイル選択ダイアログを開けません",
             format!(
-                "ファイル選択ダイアログを開けません。xdg-desktop-portal (GNOME/KDE/GTK 実装) が必要です。\
-                 ファイルをウィンドウにドラッグ＆ドロップしてアップロードすることもできます: {e:#}"
+                "{e:#} (xdg-desktop-portal の GNOME/KDE/GTK 実装が必要です。\
+                 ファイルをウィンドウにドラッグ＆ドロップしてアップロードすることもできます)"
             ),
             window,
             cx,
@@ -485,7 +486,7 @@ impl QuadernoApp {
                 Ok((n, dir)) => {
                     this.notify_success(format!("{n} 件を {} にダウンロードしました", dir.display()), window, cx)
                 }
-                Err(e) => this.notify_error(format!("ダウンロードに失敗しました: {e:#}"), window, cx),
+                Err(e) => this.notify_error("ダウンロードに失敗しました", &e, window, cx),
             },
         );
     }

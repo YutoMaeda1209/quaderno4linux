@@ -5,11 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use gpui::{
-    div, prelude::*, px, ClickEvent, Context, Entity, FocusHandle, SharedString, UniformListScrollHandle, Window,
-};
+use gpui::{div, prelude::*, px, ClickEvent, Context, FocusHandle, SharedString, UniformListScrollHandle, Window};
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::{Input, InputState};
 use gpui_component::progress::Progress;
 use gpui_component::spinner::Spinner;
 use gpui_component::{h_flex, v_flex, ActiveTheme, Disableable, IconName, Root, Sizable, TitleBar};
@@ -20,6 +17,7 @@ use quaderno_core::{
     Registration, Transport, ROOT_FOLDER_ID,
 };
 
+use crate::dialogs::Toast;
 use crate::tasks::TaskProgress;
 
 pub const CONTEXT: &str = "QuadernoApp";
@@ -70,7 +68,6 @@ pub struct QuadernoApp {
     pub focus_handle: FocusHandle,
     pub store: CredentialStore,
     pub credentials: Option<Credentials>,
-    pub address_input: Entity<InputState>,
     pub devices: Vec<DiscoveredDevice>,
     pub usb_state: usb::UsbState,
     /// Paired Bluetooth devices offering the NAP service.
@@ -91,6 +88,9 @@ pub struct QuadernoApp {
 
     pub busy: Option<TaskProgress>,
     pub log: Vec<String>,
+    /// Notifications shown at the bottom right, oldest first.
+    pub toasts: Vec<Toast>,
+    pub next_toast_id: u64,
 }
 
 impl QuadernoApp {
@@ -104,13 +104,10 @@ impl QuadernoApp {
                 None
             }
         };
-        let address_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("IP アドレス (例: 192.168.0.20, fe80::1%usb0)"));
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             store,
             credentials,
-            address_input,
             devices: Vec::new(),
             usb_state: usb::scan(),
             bt_devices: Vec::new(),
@@ -126,6 +123,8 @@ impl QuadernoApp {
             list_scroll: UniformListScrollHandle::new(),
             busy: None,
             log,
+            toasts: Vec::new(),
+            next_toast_id: 0,
         };
         this.push_log(match &this.credentials {
             Some(c) => format!("クライアント ID: {}", c.client_id),
@@ -134,17 +133,24 @@ impl QuadernoApp {
         // Dialogs and notifications need the window's `Root`, which exists only
         // after this view has been constructed.
         cx.defer_in(window, move |this, window, cx| match initial_address {
-            Some(addr) => {
-                this.address_input.update(cx, |s, cx| s.set_value(addr, window, cx));
-                this.connect_from_input(window, cx);
-            }
+            Some(addr) => match DeviceAddress::parse(&addr) {
+                Ok(addr) => this.connect_to(addr, window, cx),
+                Err(e) => this.notify_error("アドレスが正しくありません", &e, window, cx),
+            },
             None => this.discover(window, cx),
         });
         this
     }
 
     pub fn push_log(&mut self, line: impl Into<String>) {
-        self.log.push(line.into());
+        let line = line.into();
+        log::info!("{line}");
+        self.record_log(line);
+    }
+
+    /// Adds a line to the in-app log (shown in the status bar) without writing it to the log file.
+    pub fn record_log(&mut self, line: String) {
+        self.log.push(line);
         if self.log.len() > 200 {
             self.log.remove(0);
         }
@@ -186,13 +192,9 @@ impl QuadernoApp {
                         this.push_log("端末が見つかりませんでした");
                     } else {
                         this.push_log(format!("{} 台の端末が見つかりました", this.devices.len()));
-                        if let Some(first) = this.devices.first() {
-                            let addr = first.address.to_string();
-                            this.address_input.update(cx, |s, cx| s.set_value(addr, window, cx));
-                        }
                     }
                 }
-                Err(e) => this.notify_error(format!("検索に失敗しました: {e:#}"), window, cx),
+                Err(e) => this.notify_error("検索に失敗しました", &e, window, cx),
             },
         );
     }
@@ -237,8 +239,6 @@ impl QuadernoApp {
                         }
                     }
                     this.usb_state = usb::scan();
-                    let text = addr.to_string();
-                    this.address_input.update(cx, |s, cx| s.set_value(text, window, cx));
                     this.connect_to(addr, window, cx);
                 }
                 Err(e) => {
@@ -246,7 +246,7 @@ impl QuadernoApp {
                     if matches!(e.downcast_ref::<Error>(), Some(Error::UsbPermission(_))) {
                         this.offer_udev_rule_install(e, window, cx);
                     } else {
-                        this.notify_error(format!("USB 接続に失敗しました: {e:#}"), window, cx);
+                        this.notify_error("USB 接続に失敗しました", &e, window, cx);
                     }
                 }
             },
@@ -259,7 +259,8 @@ impl QuadernoApp {
         if usb::udev_rule_installed() {
             // The rule only applies to users logged in on the local seat.
             self.notify_error(
-                format!("USB 接続に失敗しました: {e:#}。udev ルールはインストール済みです。端末を挿し直すか、dialout グループに参加してください"),
+                "USB 接続に失敗しました。端末を挿し直してください",
+                format!("{e:#} (udev ルールはインストール済み。挿し直しても解決しない場合は dialout グループに参加してください)"),
                 window,
                 cx,
             );
@@ -284,20 +285,11 @@ impl QuadernoApp {
                             this.notify_success("udev ルールをインストールしました", window, cx);
                             this.connect_usb(window, cx);
                         }
-                        Err(e) => this.notify_error(format!("{e:#}"), window, cx),
+                        Err(e) => this.notify_error("udev ルールをインストールできませんでした", &e, window, cx),
                     },
                 );
             },
         );
-    }
-
-    /// Connects to the address in the address field.
-    pub fn connect_from_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.address_input.read(cx).value().to_string();
-        match DeviceAddress::parse(&text) {
-            Ok(addr) => self.connect_to(addr, window, cx),
-            Err(e) => self.notify_error(e.to_string(), window, cx),
-        }
     }
 
     pub fn connect_to(&mut self, addr: DeviceAddress, window: &mut Window, cx: &mut Context<Self>) {
@@ -328,6 +320,7 @@ impl QuadernoApp {
             move |this, result, window, cx| match result {
                 Ok((client, name, status, entries)) => {
                     this.push_log(format!("{name} に接続しました ({addr})"));
+                    this.watch_connection(client.clone(), window, cx);
                     this.connection = Connection::Connected { client, name, status };
                     this.path.truncate(1);
                     this.set_entries(entries);
@@ -346,7 +339,7 @@ impl QuadernoApp {
                             move |this, window, cx| this.start_pairing(addr, window, cx),
                         );
                     } else {
-                        this.notify_error(format!("接続に失敗しました: {e:#}"), window, cx);
+                        this.notify_error("接続に失敗しました", &e, window, cx);
                     }
                 }
             },
@@ -363,6 +356,43 @@ impl QuadernoApp {
         self.path.truncate(1);
         self.push_log("切断しました");
         cx.notify();
+    }
+
+    /// Polls the device while `client` is the active connection and drops the
+    /// connection when the device goes away (cable pulled, Wi-Fi or Bluetooth off).
+    fn watch_connection(&mut self, client: Arc<DeviceClient>, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failures = 0;
+            loop {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                let Ok((active, busy)) = this.update(cx, |this, _| {
+                    (this.client().is_some_and(|c| Arc::ptr_eq(&c, &client)), this.busy.is_some())
+                }) else {
+                    return;
+                };
+                if !active {
+                    return;
+                }
+                // A running task talks to the device itself and reports its own errors.
+                if busy {
+                    continue;
+                }
+                let c = client.clone();
+                let alive = cx.background_executor().spawn(async move { device_alive(&c) }).await;
+                failures = if alive { 0 } else { failures + 1 };
+                if failures >= 2 {
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        if this.client().is_some_and(|c| Arc::ptr_eq(&c, &client)) {
+                            this.disconnect(cx);
+                            this.usb_state = usb::scan();
+                            this.notify_warning("端末との接続が切れました", window, cx);
+                        }
+                    });
+                    return;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Brings up the Bluetooth PAN link to a paired device, finds it and connects.
@@ -389,11 +419,9 @@ impl QuadernoApp {
             move |this, result, window, cx| match result {
                 Ok(addr) => {
                     this.bt_link = Some(dev);
-                    let text = addr.to_string();
-                    this.address_input.update(cx, |s, cx| s.set_value(text, window, cx));
                     this.connect_to(addr, window, cx);
                 }
-                Err(e) => this.notify_error(format!("Bluetooth 接続に失敗しました: {e:#}"), window, cx),
+                Err(e) => this.notify_error("Bluetooth 接続に失敗しました", &e, window, cx),
             },
         );
     }
@@ -422,7 +450,7 @@ impl QuadernoApp {
                         },
                     );
                 }
-                Err(e) => this.notify_error(format!("ペアリングを開始できません: {e:#}"), window, cx),
+                Err(e) => this.notify_error("ペアリングを開始できません", &e, window, cx),
             },
         );
     }
@@ -452,7 +480,7 @@ impl QuadernoApp {
                     this.notify_success("ペアリングが完了しました", window, cx);
                     this.connect_to(addr, window, cx);
                 }
-                Err(e) => this.notify_error(format!("ペアリングに失敗しました: {e:#}"), window, cx),
+                Err(e) => this.notify_error("ペアリングに失敗しました", &e, window, cx),
             },
         );
     }
@@ -496,9 +524,7 @@ impl QuadernoApp {
                 .child(div().text_sm().child(label))
                 .child(div().text_xs().text_color(theme.muted_foreground).child(format!("{via} · {addr}")))
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                    let text = addr.to_string();
-                    this.address_input.update(cx, |s, cx| s.set_value(text, window, cx));
-                    if is_double_click(ev) {
+                    if is_double_click(ev) && this.busy.is_none() && this.client().is_none() {
                         this.connect_to(addr, window, cx);
                     }
                 }))
@@ -566,27 +592,17 @@ impl QuadernoApp {
             .child(div().text_xs().text_color(theme.muted_foreground).child(usb_summary))
             .child(section_title("Bluetooth", cx))
             .child(bluetooth_section)
-            .child(section_title("Wi-Fi / 手動接続", cx))
-            .child(Input::new(&self.address_input).small().disabled(busy || connected))
+            .child(section_title("Wi-Fi", cx))
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("connect-addr")
-                            .label("接続")
-                            .small()
-                            .disabled(busy || connected)
-                            .on_click(cx.listener(|this, _, window, cx| this.connect_from_input(window, cx))),
-                    )
-                    .child(
-                        Button::new("discover")
-                            .label("端末を検索")
-                            .icon(IconName::Search)
-                            .small()
-                            .outline()
-                            .disabled(busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.discover(window, cx))),
-                    ),
+                h_flex().child(
+                    Button::new("discover")
+                        .label("端末を検索")
+                        .icon(IconName::Search)
+                        .small()
+                        .outline()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.discover(window, cx))),
+                ),
             )
             .child(section_title("見つかった端末", cx))
             .child(
@@ -612,10 +628,13 @@ impl QuadernoApp {
             }))
             .child(Button::new("pair").label("ペアリングし直す").small().ghost().disabled(busy).on_click(cx.listener(
                 |this, _, window, cx| {
-                    let text = this.address_input.read(cx).value().to_string();
-                    match DeviceAddress::parse(&text) {
-                        Ok(addr) => this.start_pairing(addr, window, cx),
-                        Err(e) => this.notify_error(format!("{e} (先に端末のアドレスを指定してください)"), window, cx),
+                    let addr = match &this.connection {
+                        Connection::Connected { client, .. } => Some(*client.address()),
+                        Connection::Disconnected => this.devices.first().map(|d| d.address),
+                    };
+                    match addr {
+                        Some(addr) => this.start_pairing(addr, window, cx),
+                        None => this.notify_warning("先に「端末を検索」で端末を見つけてください", window, cx),
                     }
                 },
             )))
@@ -699,6 +718,18 @@ fn short_id(id: &str) -> String {
     id.chars().take(8).collect::<String>() + "…"
 }
 
+/// `false` when the device cannot be reached any more.
+fn device_alive(client: &DeviceClient) -> bool {
+    let addr = client.address();
+    // USB and Bluetooth use link-local addresses; their interface disappears
+    // as soon as the device is unplugged or the PAN link drops.
+    if addr.scope_id != 0 && addr.interface_name().is_none() {
+        return false;
+    }
+    // Any answer from the device, even an error document, means it is still there.
+    !matches!(client.ping(), Err(Error::Http(_) | Error::Io(_)))
+}
+
 /// Battery / storage summary for the sidebar.
 pub fn device_status(client: &DeviceClient) -> String {
     let mut parts = Vec::new();
@@ -722,7 +753,7 @@ pub fn device_status(client: &DeviceClient) -> String {
 impl Render for QuadernoApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dialog_layer = Root::render_dialog_layer(window, cx);
-        let notification_layer = Root::render_notification_layer(window, cx);
+        let toast_layer = self.render_toasts(cx);
         let sidebar = self.render_sidebar(cx);
         let explorer = self.render_explorer(window, cx);
         let status = self.render_status_bar(cx);
@@ -755,6 +786,6 @@ impl Render for QuadernoApp {
             .child(h_flex().flex_1().min_h_0().child(sidebar).child(explorer))
             .child(status)
             .children(dialog_layer)
-            .children(notification_layer)
+            .child(toast_layer)
     }
 }

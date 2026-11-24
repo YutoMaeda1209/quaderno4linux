@@ -12,6 +12,7 @@ gpui = "0.2.2"
 gpui-component = "0.5.1"
 gpui-component-assets = "0.5.1"
 env_logger = "0.11"
+dirs = "6"
 # gpui 0.2.2 depends (via zed-async-tar) on xattr 0.2.3, which uses `libc::ENOATTR`.
 # That constant was removed for Linux in libc 0.2.190, so pin libc until gpui
 # moves to a newer xattr. Not used directly by this crate.

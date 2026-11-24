@@ -5,13 +5,17 @@ mod dialogs;
 mod explorer;
 mod tasks;
 
+use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
+
 use gpui::{px, size, App, AppContext, Application, Bounds, KeyBinding, WindowBounds, WindowOptions};
 use gpui_component::{Root, TitleBar};
 
 use crate::app::QuadernoApp;
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    init_logging();
 
     // `quaderno4linux --connect <address>` connects right away (handy with quaderno-mock).
     let args: Vec<String> = std::env::args().collect();
@@ -43,6 +47,41 @@ fn main() {
         .expect("failed to open the main window");
         cx.activate(true);
     });
+}
+
+/// `~/.local/state/quaderno4linux/quaderno4linux.log`, overwritten on every start.
+pub fn log_file_path() -> Option<PathBuf> {
+    Some(dirs::state_dir()?.join("quaderno4linux").join("quaderno4linux.log"))
+}
+
+/// Logs to stderr and, when it can be created, to the log file.
+fn init_logging() {
+    let file = log_file_path().and_then(|path| {
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        File::create(path).ok()
+    });
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .target(env_logger::Target::Pipe(Box::new(Tee(file))))
+        .init();
+}
+
+struct Tee(Option<File>);
+
+impl Write for Tee {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Some(f) = &mut self.0 {
+            let _ = f.write_all(buf);
+        }
+        std::io::stderr().write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Some(f) = &mut self.0 {
+            let _ = f.flush();
+        }
+        std::io::stderr().flush()
+    }
 }
 
 fn bind_keys(cx: &mut App) {

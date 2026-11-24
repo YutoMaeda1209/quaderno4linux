@@ -7,7 +7,7 @@ Rust と [GPUI](https://www.gpui.rs/) (+ [gpui-component](https://github.com/lon
 
 - **接続**
   - USB: 端末を USB シリアルモードから USB Ethernet モード (RNDIS / CDC-ECM) に切り替え、IPv6 リンクローカルで自動接続
-  - Wi-Fi / LAN: mDNS (`_dp_fujitsu._tcp`) で端末を自動検索 (IPv4 を優先)。IP アドレスを直接指定することも可能
+  - Wi-Fi / LAN: mDNS (`_dp_fujitsu._tcp`) で端末を自動検索 (IPv4 を優先)
   - Bluetooth: ペアリング済みの端末に Bluetooth PAN (PANU) で接続。NetworkManager の接続プロファイル (固定 IPv4) を自動で作成
   - ペアリング: 端末に表示される 8 桁の PIN で登録 (認証情報は `~/.config/quaderno4linux/` に保存。[dpt-rp1-py](https://github.com/janten/dpt-rp1-py) の `~/.config/dpt/` があればそれも利用)
 - **ファイルエクスプローラー**
@@ -71,7 +71,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 ## 使い方
 
 1. **USB**: 端末をケーブルでつなぎ「USB で接続」を押します。うまくいかない場合は方式ボタンで RNDIS / CDC-ECM を切り替えてください。
-2. **Wi-Fi**: 端末とパソコンを同じネットワークにつなぎ「端末を検索」を押して、見つかった端末をダブルクリックします。見つからない場合は端末の IP アドレスを入力して「接続」を押します。
+2. **Wi-Fi**: 端末とパソコンを同じネットワークにつなぎ「端末を検索」を押して、見つかった端末をダブルクリックします。
 3. **Bluetooth**: 端末で Bluetooth のペアリング画面を開いたまま、OS の Bluetooth 設定で `FMVDP51_<シリアル番号下 7 桁>` とペアリングします (両方の画面に表示される 6 桁の数字を確認)。
    その後アプリで「端末を検索」を押し、Bluetooth 欄の端末の「接続」を押します。転送速度は Wi-Fi よりかなり遅く (実測 約 0.07 MB/s)、大きなファイルには USB か Wi-Fi が向いています。
 4. 初回はアプリと端末のペアリング (登録) を求められます。端末の画面に表示された PIN を入力してください。端末の画面に表示された PIN を入力してください。
@@ -90,8 +90,8 @@ sudo udevadm control --reload && sudo udevadm trigger
   NetworkManager の接続 (PANU、IPv4 `172.25.48.2/24` 固定) を作成して使います。BNEP 接続は不安定なことがあり、アプリは 3 回まで再試行します。
   端末のアドレスは mDNS で探し、見つからなければ `172.25.48.1` を試します。
   `172.25.0.0/16` は Docker の既定ブリッジと重なることがあるので、うまく通信できない場合は `ip route get 172.25.48.1` で経路を確認してください。
-- **アドレスの手動指定**: `192.168.0.20`、`fe80::xxxx%enx0123456789ab` (IPv6 リンクローカルはインターフェース名付き) の形式で入力できます。
-- **ログ**: `RUST_LOG=debug quaderno4linux` で詳細なログを出力します。
+- **アドレスの直接指定**: `quaderno4linux --connect 192.168.0.20` のように起動時に指定できます (IPv6 リンクローカルは `fe80::xxxx%enx0123456789ab` のようにインターフェース名付き)。
+- **ログ**: エラーの詳細は `~/.local/state/quaderno4linux/quaderno4linux.log` に記録されます (起動ごとに上書き)。エラー通知の「ログを開く」から開けます。`RUST_LOG=debug quaderno4linux` でより詳細なログを出力します。
 
 ## 開発
 

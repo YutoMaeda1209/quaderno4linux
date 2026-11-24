@@ -4741,6 +4741,7 @@ name = "quaderno4linux"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs 6.0.0",
  "env_logger",
  "gpui",
  "gpui-component",
