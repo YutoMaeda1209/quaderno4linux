@@ -13,6 +13,9 @@ env:
   CARGO_TERM_COLOR: always
   # `-D warnings` が対象にしない Cargo のマニフェストの lint も含め、warning があれば失敗させる。
   CARGO_BUILD_WARNINGS: deny
+  # Compose が buildx bake でビルドすると、devcontainer CLI が /tmp に生成する Dockerfile の
+  # 読み取りに追加の許可を求めて失敗する。
+  COMPOSE_BAKE: "false"
 
 jobs:
   check:
