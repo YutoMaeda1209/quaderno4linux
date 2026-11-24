@@ -13,10 +13,11 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::progress::Progress;
 use gpui_component::spinner::Spinner;
 use gpui_component::{h_flex, v_flex, ActiveTheme, Disableable, IconName, Root, Sizable, TitleBar};
+use quaderno_core::bluetooth::{self, BluetoothDevice};
 use quaderno_core::usb::UsbNetMode;
 use quaderno_core::{
     format_size, usb, CredentialStore, Credentials, DeviceAddress, DeviceClient, DiscoveredDevice, Entry, Error,
-    Registration, ROOT_FOLDER_ID,
+    Registration, Transport, ROOT_FOLDER_ID,
 };
 
 use crate::tasks::TaskProgress;
@@ -72,6 +73,10 @@ pub struct QuadernoApp {
     pub address_input: Entity<InputState>,
     pub devices: Vec<DiscoveredDevice>,
     pub usb_state: usb::UsbState,
+    /// Paired Bluetooth devices offering the NAP service.
+    pub bt_devices: Vec<BluetoothDevice>,
+    /// The Bluetooth device whose PAN link this app brought up.
+    pub bt_link: Option<BluetoothDevice>,
     pub usb_mode: UsbNetMode,
     pub connection: Connection,
 
@@ -108,6 +113,8 @@ impl QuadernoApp {
             address_input,
             devices: Vec::new(),
             usb_state: usb::scan(),
+            bt_devices: Vec::new(),
+            bt_link: None,
             usb_mode: UsbNetMode::Rndis,
             connection: Connection::Disconnected,
             path: vec![(ROOT_FOLDER_ID.into(), "Document".into())],
@@ -162,10 +169,18 @@ impl QuadernoApp {
             "端末を検索しています",
             window,
             cx,
-            |_| Ok((usb::scan(), quaderno_core::discover(Duration::from_millis(2500)))),
+            |_| {
+                // Bluetooth is optional: without BlueZ the list is simply empty.
+                let bt = bluetooth::paired_devices().unwrap_or_else(|e| {
+                    log::info!("{e}");
+                    Vec::new()
+                });
+                Ok((usb::scan(), bt, quaderno_core::discover(Duration::from_millis(2500))))
+            },
             |this, result, window, cx| match result {
-                Ok((usb_state, devices)) => {
+                Ok((usb_state, bt_devices, devices)) => {
                     this.usb_state = usb_state;
+                    this.bt_devices = bt_devices;
                     this.devices = devices;
                     if this.devices.is_empty() {
                         this.push_log("端末が見つかりませんでした");
@@ -203,7 +218,7 @@ impl QuadernoApp {
                 // The link-local address needs a moment (DAD) after the interface comes up.
                 for _ in 0..6 {
                     let found: Vec<_> =
-                        quaderno_core::discover(Duration::from_millis(1500)).into_iter().filter(|d| d.usb).collect();
+                        quaderno_core::discover(Duration::from_millis(1500)).into_iter().filter(|d| d.transport == Transport::Usb).collect();
                     if !found.is_empty() {
                         return Ok(found);
                     }
@@ -297,12 +312,48 @@ impl QuadernoApp {
     }
 
     pub fn disconnect(&mut self, cx: &mut Context<Self>) {
+        if let Some(dev) = self.bt_link.take() {
+            cx.background_executor().spawn(async move { bluetooth::disconnect_pan(&dev) }).detach();
+        }
         self.connection = Connection::Disconnected;
         self.entries.clear();
         self.selection.clear();
         self.path.truncate(1);
         self.push_log("切断しました");
         cx.notify();
+    }
+
+    /// Brings up the Bluetooth PAN link to a paired device, finds it and connects.
+    pub fn connect_bluetooth(&mut self, dev: BluetoothDevice, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_task(
+            format!("Bluetooth ({}) で接続しています", dev.name),
+            window,
+            cx,
+            {
+                let dev = dev.clone();
+                move |progress| {
+                    progress.set_detail("PAN 接続を確立しています (数十秒かかることがあります)");
+                    let iface = bluetooth::connect_pan(&dev)?;
+                    progress.set_detail(format!("{iface} 上で端末を探しています"));
+                    match bluetooth::locate_device(&iface) {
+                        Ok(addr) => Ok(addr),
+                        Err(e) => {
+                            bluetooth::disconnect_pan(&dev);
+                            Err(e.into())
+                        }
+                    }
+                }
+            },
+            move |this, result, window, cx| match result {
+                Ok(addr) => {
+                    this.bt_link = Some(dev);
+                    let text = addr.to_string();
+                    this.address_input.update(cx, |s, cx| s.set_value(text, window, cx));
+                    this.connect_to(addr, window, cx);
+                }
+                Err(e) => this.notify_error(format!("Bluetooth 接続に失敗しました: {e:#}"), window, cx),
+            },
+        );
     }
 
     /// Pairing step 1: the device shows a PIN, then we ask the user for it.
@@ -367,9 +418,10 @@ impl QuadernoApp {
     // ----- rendering ----------------------------------------------------
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
         let busy = self.busy.is_some();
         let connected = matches!(self.connection, Connection::Connected { .. });
+        let bluetooth_section = self.render_bluetooth(busy || connected, cx);
+        let theme = cx.theme();
 
         let usb_summary: SharedString = if !self.usb_state.interfaces.is_empty() {
             format!(
@@ -391,7 +443,7 @@ impl QuadernoApp {
         let devices = self.devices.iter().enumerate().map(|(i, d)| {
             let addr = d.address;
             let label = d.info.as_ref().map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
-            let via = if d.usb { "USB" } else { "Wi-Fi / LAN" };
+            let via = d.transport.label();
             div()
                 .id(("device", i))
                 .px_2()
@@ -470,6 +522,8 @@ impl QuadernoApp {
                     ),
             )
             .child(div().text_xs().text_color(theme.muted_foreground).child(usb_summary))
+            .child(section_title("Bluetooth", cx))
+            .child(bluetooth_section)
             .child(section_title("Wi-Fi / 手動接続", cx))
             .child(Input::new(&self.address_input).small().disabled(busy || connected))
             .child(
@@ -523,6 +577,33 @@ impl QuadernoApp {
                     }
                 },
             )))
+    }
+
+    fn render_bluetooth(&self, disabled: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        if self.bt_devices.is_empty() {
+            return v_flex().child(div().text_xs().text_color(theme.muted_foreground).child(
+                "ペアリング済みの端末がありません。端末の Bluetooth ペアリング画面を開いたまま、\
+                 OS の Bluetooth 設定でペアリングしてから「端末を検索」を押してください",
+            ));
+        }
+        v_flex().gap_1().children(self.bt_devices.iter().enumerate().map(|(i, dev)| {
+            let d = dev.clone();
+            h_flex()
+                .gap_2()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(div().text_sm().truncate().child(dev.name.clone()))
+                        .child(div().text_xs().text_color(theme.muted_foreground).child(dev.address.clone())),
+                )
+                .child(
+                    Button::new(("bt-connect", i)).label("接続").small().outline().disabled(disabled).on_click(
+                        cx.listener(move |this, _, window, cx| this.connect_bluetooth(d.clone(), window, cx)),
+                    ),
+                )
+        }))
     }
 
     fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {

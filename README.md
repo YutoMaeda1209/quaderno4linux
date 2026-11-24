@@ -7,7 +7,8 @@ Rust と [GPUI](https://www.gpui.rs/) (+ [gpui-component](https://github.com/lon
 
 - **接続**
   - USB: 端末を USB シリアルモードから USB Ethernet モード (RNDIS / CDC-ECM) に切り替え、IPv6 リンクローカルで自動接続
-  - Wi-Fi / LAN: mDNS (`_dp_fujitsu._tcp`) で端末を自動検索。IP アドレスを直接指定することも可能
+  - Wi-Fi / LAN: mDNS (`_dp_fujitsu._tcp`) で端末を自動検索 (IPv4 を優先)。IP アドレスを直接指定することも可能
+  - Bluetooth: ペアリング済みの端末に Bluetooth PAN (PANU) で接続。NetworkManager の接続プロファイル (固定 IPv4) を自動で作成
   - ペアリング: 端末に表示される 8 桁の PIN で登録 (認証情報は `~/.config/quaderno4linux/` に保存。[dpt-rp1-py](https://github.com/janten/dpt-rp1-py) の `~/.config/dpt/` があればそれも利用)
 - **ファイルエクスプローラー**
   - アップロード (ファイル・フォルダ、ウィンドウへのドラッグ＆ドロップにも対応) / ダウンロード (フォルダは再帰的に)
@@ -31,6 +32,7 @@ Rust と [GPUI](https://www.gpui.rs/) (+ [gpui-component](https://github.com/lon
 
 Ubuntu 24.04 以降 / Fedora 40 以降 (X11 または Wayland)。Vulkan 対応の GPU ドライバ (Mesa など) が必要です。
 ファイル選択ダイアログには xdg-desktop-portal (GNOME / KDE / GTK のいずれかの実装) を使います。
+Bluetooth 接続には BlueZ (`bluetoothctl`) と NetworkManager (`nmcli`) が必要です (Ubuntu / Fedora のデスクトップには標準で入っています)。
 
 ## ビルド
 
@@ -69,8 +71,10 @@ sudo udevadm control --reload && sudo udevadm trigger
 
 1. **USB**: 端末をケーブルでつなぎ「USB で接続」を押します。うまくいかない場合は方式ボタンで RNDIS / CDC-ECM を切り替えてください。
 2. **Wi-Fi**: 端末とパソコンを同じネットワークにつなぎ「端末を検索」を押して、見つかった端末をダブルクリックします。見つからない場合は端末の IP アドレスを入力して「接続」を押します。
-3. 初回はペアリングを求められます。端末の画面に表示された PIN を入力してください。
-4. 右側のエクスプローラーでファイルを操作します。
+3. **Bluetooth**: 端末で Bluetooth のペアリング画面を開いたまま、OS の Bluetooth 設定で `FMVDP51_<シリアル番号下 7 桁>` とペアリングします (両方の画面に表示される 6 桁の数字を確認)。
+   その後アプリで「端末を検索」を押し、Bluetooth 欄の端末の「接続」を押します。転送速度は Wi-Fi よりかなり遅く (実測 約 0.07 MB/s)、大きなファイルには USB か Wi-Fi が向いています。
+4. 初回はアプリと端末のペアリング (登録) を求められます。端末の画面に表示された PIN を入力してください。端末の画面に表示された PIN を入力してください。
+5. 右側のエクスプローラーでファイルを操作します。
 
 ### トラブルシューティング
 
@@ -81,6 +85,10 @@ sudo udevadm control --reload && sudo udevadm trigger
   nmcli connection add type ethernet con-name Quaderno ifname <インターフェース名> \
     ipv4.method link-local ipv6.method link-local
   ```
+- **Bluetooth で接続できない**: 端末は PAN 上で DHCP に応答しないため、アプリは `Quaderno Bluetooth <BD アドレス>` という
+  NetworkManager の接続 (PANU、IPv4 `172.25.48.2/24` 固定) を作成して使います。BNEP 接続は不安定なことがあり、アプリは 3 回まで再試行します。
+  端末のアドレスは mDNS で探し、見つからなければ `172.25.48.1` を試します。
+  `172.25.0.0/16` は Docker の既定ブリッジと重なることがあるので、うまく通信できない場合は `ip route get 172.25.48.1` で経路を確認してください。
 - **アドレスの手動指定**: `192.168.0.20`、`fe80::xxxx%enx0123456789ab` (IPv6 リンクローカルはインターフェース名付き) の形式で入力できます。
 - **ログ**: `RUST_LOG=debug quaderno4linux` で詳細なログを出力します。
 
@@ -119,7 +127,7 @@ gpui 0.2.2 が依存する `xattr 0.2.3` は libc 0.2.190 以降でビルドで�
 
 | パス | 内容 |
 | --- | --- |
-| `crates/quaderno-core` | プロトコル実装 (USB モード切替、mDNS 検索、ペアリング、認証、文書 API) |
+| `crates/quaderno-core` | プロトコル実装 (USB モード切替、Bluetooth PAN、mDNS 検索、ペアリング、認証、文書 API) |
 | `crates/quaderno4linux` | GPUI デスクトップアプリ |
 | `crates/quaderno-mock` | 開発・テスト用のモック端末 |
 | `packaging/linux` | udev ルール、デスクトップエントリ |
@@ -130,7 +138,8 @@ gpui 0.2.2 が依存する `xattr 0.2.3` は libc 0.2.190 以降でビルドで�
 [dpt-rp1-py](https://github.com/janten/dpt-rp1-py) を参考にしています。概要:
 
 - USB: シリアル (`04c5:1656`) に `01 00 00 01 00 00 00 01 <00=RNDIS|01=CDC-ECM> 04` を書き込むと USB Ethernet (`04c5:1657`) に切り替わる
-- ポート 8080 (HTTP): 端末情報・ペアリング (DH group 14 + PBKDF2-HMAC-SHA256 + AES-128-CBC 鍵ラップ)
+- Wi-Fi / Bluetooth: mDNS (`_dp_fujitsu._tcp.local.`) で検索。Bluetooth は Classic PAN (端末が NAP、PC が PANU)、DHCP なし
+- ポート 8080 (HTTP): 端末情報・ペアリング (DH group 14 + PBKDF2-HMAC-SHA256 + AES-128-CBC 鍵ラップ。端末の DH 公開鍵 YB は受信したバイト列のまま HMAC に使う)
 - ポート 8443 (HTTPS, 自己署名証明書): RSA 署名による認証後、`Credentials` クッキーで文書 API を利用
 
 コントリビュートの方法は [CONTRIBUTING.md](.github/CONTRIBUTING.md) を参照してください。

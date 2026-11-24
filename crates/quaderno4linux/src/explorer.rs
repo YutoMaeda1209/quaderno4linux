@@ -669,7 +669,7 @@ impl QuadernoApp {
                 .child(
                     div()
                         .text_xs()
-                        .child("USB ケーブルで接続して「USB で接続」を押すか、Wi-Fi の場合は「端末を検索」を押します"),
+                        .child("USB は「USB で接続」、Bluetooth はペアリング済み端末の「接続」、Wi-Fi は「端末を検索」から接続します"),
                 )
                 .into_any_element()
         } else if count == 0 {

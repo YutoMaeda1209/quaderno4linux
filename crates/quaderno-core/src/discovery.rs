@@ -25,6 +25,37 @@ const MDNS_PORT: u16 = 5353;
 const TYPE_PTR: u16 = 12;
 const TYPE_SRV: u16 = 33;
 
+/// How a device was reached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Transport {
+    /// USB Ethernet (RNDIS / CDC-ECM).
+    Usb,
+    /// Wi-Fi or another LAN interface.
+    Network,
+    /// Bluetooth PAN (BNEP).
+    Bluetooth,
+}
+
+impl Transport {
+    pub fn label(self) -> &'static str {
+        match self {
+            Transport::Usb => "USB",
+            Transport::Network => "Wi-Fi / LAN",
+            Transport::Bluetooth => "Bluetooth",
+        }
+    }
+
+    fn of_interface(name: &str, usb_ifaces: &HashSet<String>) -> Self {
+        if usb_ifaces.contains(name) {
+            Transport::Usb
+        } else if crate::bluetooth::is_bluetooth_interface(name) {
+            Transport::Bluetooth
+        } else {
+            Transport::Network
+        }
+    }
+}
+
 /// A device found on the network.
 #[derive(Clone, Debug)]
 pub struct DiscoveredDevice {
@@ -32,15 +63,13 @@ pub struct DiscoveredDevice {
     pub port: u16,
     pub interface: Option<String>,
     pub info: Option<DeviceInfo>,
-    /// Whether the device was reached through the USB Ethernet interface.
-    pub usb: bool,
+    pub transport: Transport,
 }
 
 impl DiscoveredDevice {
     pub fn label(&self) -> String {
         let name = self.info.as_ref().map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
-        let via = if self.usb { "USB" } else { "Wi-Fi/LAN" };
-        format!("{name} – {via} – {}", self.address)
+        format!("{name} – {} – {}", self.transport.label(), self.address)
     }
 }
 
@@ -224,7 +253,7 @@ pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
                 found.push(DiscoveredDevice {
                     address,
                     port: answer.port.unwrap_or(HTTP_PORT),
-                    usb: usb_ifaces.contains(&probe.interface),
+                    transport: Transport::of_interface(&probe.interface, &usb_ifaces),
                     interface: Some(probe.interface.clone()),
                     info: None,
                 });
@@ -257,10 +286,15 @@ pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
         }
     });
     // Prefer verified devices; drop duplicates of the same serial on the same transport.
-    found.sort_by_key(|d| (!d.usb, d.info.is_none(), matches!(d.address.ip, IpAddr::V4(_))));
+    // The device answers over IPv4 and IPv6: USB has only link-local addressing and
+    // IPv6 is stable there, while on Wi-Fi / Bluetooth the IPv4 address is preferred.
+    found.sort_by_key(|d| {
+        let v4 = matches!(d.address.ip, IpAddr::V4(_));
+        (d.transport, d.info.is_none(), if d.transport == Transport::Usb { v4 } else { !v4 })
+    });
     let mut seen = HashSet::new();
     found.retain(|d| {
-        let key = (d.info.as_ref().and_then(|i| i.serial_number.clone()), d.usb);
+        let key = (d.info.as_ref().and_then(|i| i.serial_number.clone()), d.transport);
         key.0.is_none() || seen.insert(key)
     });
     found
