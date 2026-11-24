@@ -203,36 +203,25 @@ pub fn connect_pan(dev: &BluetoothDevice) -> Result<String> {
     let name = dev.connection_name();
     let t = Duration::from_secs(20);
     let existing = run("nmcli", &["-t", "-f", "NAME", "connection", "show"], t)?;
-    let settings = profile_settings(dev);
-    let settings: Vec<&str> = settings.iter().map(String::as_str).collect();
-    if existing.lines().any(|l| l == name) {
-        let mut args = vec!["connection", "modify", name.as_str()];
-        args.extend(&settings);
-        run("nmcli", &args, t)?;
+    let mut args = if existing.lines().any(|l| l == name) {
+        vec!["connection", "modify", name.as_str()]
     } else {
-        let mut args = vec!["connection", "add", "type", "bluetooth", "con-name", name.as_str()];
-        args.extend(&settings);
-        run("nmcli", &args, t)?;
-    }
+        vec!["connection", "add", "type", "bluetooth", "con-name", name.as_str()]
+    };
+    let settings = profile_settings(dev);
+    args.extend(settings.iter().map(String::as_str));
+    run("nmcli", &args, t)?;
 
-    let mut last_error = None;
-    for attempt in 1..=CONNECT_ATTEMPTS {
-        match run("nmcli", &["--wait", "45", "connection", "up", name.as_str()], Duration::from_secs(60)) {
-            Ok(_) => {
-                last_error = None;
-                break;
-            }
-            Err(e) => {
-                log::warn!("Bluetooth PAN 接続に失敗しました ({attempt}/{CONNECT_ATTEMPTS}): {e}");
-                last_error = Some(e);
-                std::thread::sleep(Duration::from_secs(2));
-            }
+    let mut attempt = 1;
+    while let Err(e) = run("nmcli", &["--wait", "45", "connection", "up", name.as_str()], Duration::from_secs(60)) {
+        log::warn!("Bluetooth PAN 接続に失敗しました ({attempt}/{CONNECT_ATTEMPTS}): {e}");
+        if attempt == CONNECT_ATTEMPTS {
+            return Err(Error::Bluetooth(format!(
+                "Bluetooth PAN に接続できません。端末の Bluetooth が有効か確認してください ({e})"
+            )));
         }
-    }
-    if let Some(e) = last_error {
-        return Err(Error::Bluetooth(format!(
-            "Bluetooth PAN に接続できません。端末の Bluetooth が有効か確認してください ({e})"
-        )));
+        attempt += 1;
+        std::thread::sleep(Duration::from_secs(2));
     }
 
     let iface = run("nmcli", &["-g", "GENERAL.IP-IFACE", "connection", "show", name.as_str()], t)

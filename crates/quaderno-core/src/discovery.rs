@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::{Duration, Instant};
 
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 use crate::address::{DeviceAddress, HTTP_PORT};
 use crate::client::device_information;
@@ -66,9 +66,9 @@ pub struct DiscoveredDevice {
 }
 
 impl DiscoveredDevice {
-    pub fn label(&self) -> String {
-        let name = self.info.as_ref().map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
-        format!("{name} – {} – {}", self.transport.label(), self.address)
+    /// 人が読むための端末名。端末情報を読み取れなかった場合は `Quaderno`。
+    pub fn name(&self) -> String {
+        self.info.as_ref().map(DeviceInfo::display_name).unwrap_or_else(|| "Quaderno".into())
     }
 }
 
@@ -167,7 +167,15 @@ fn parse_response(packet: &[u8]) -> Option<Answer> {
 
 struct Probe {
     socket: Socket,
+    /// クエリの送り先 (インターフェースに対応するマルチキャストアドレス)。
+    target: SockAddr,
     interface: String,
+}
+
+impl Probe {
+    fn send(&self, query: &[u8]) -> bool {
+        self.socket.send_to(query, &self.target).is_ok()
+    }
 }
 
 fn open_probes() -> Vec<Probe> {
@@ -192,8 +200,10 @@ fn open_probes() -> Vec<Probe> {
             }
             let _ = socket.set_multicast_if_v4(&ip);
             let _ = socket.set_multicast_ttl_v4(255);
-            if socket.send_to(&query, &SocketAddr::V4(SocketAddrV4::new(MDNS_V4, MDNS_PORT)).into()).is_ok() {
-                probes.push(Probe { socket, interface: name });
+            let target = SocketAddr::V4(SocketAddrV4::new(MDNS_V4, MDNS_PORT)).into();
+            let probe = Probe { socket, target, interface: name };
+            if probe.send(&query) {
+                probes.push(probe);
             }
         } else if let Some(v6) = addr.as_sockaddr_in6() {
             let ip = v6.ip();
@@ -212,8 +222,10 @@ fn open_probes() -> Vec<Probe> {
             }
             let _ = socket.set_multicast_if_v6(index);
             let _ = socket.set_multicast_hops_v6(255);
-            if socket.send_to(&query, &SocketAddr::V6(SocketAddrV6::new(MDNS_V6, MDNS_PORT, 0, index)).into()).is_ok() {
-                probes.push(Probe { socket, interface: name });
+            let target = SocketAddr::V6(SocketAddrV6::new(MDNS_V6, MDNS_PORT, 0, index)).into();
+            let probe = Probe { socket, target, interface: name };
+            if probe.send(&query) {
+                probes.push(probe);
             }
         }
     }
@@ -262,12 +274,7 @@ pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
             resent = true;
             let query = build_query();
             for probe in &probes {
-                let target: SocketAddr = match probe.socket.local_addr().ok().and_then(|a| a.as_socket()) {
-                    Some(SocketAddr::V4(_)) => SocketAddr::V4(SocketAddrV4::new(MDNS_V4, MDNS_PORT)),
-                    Some(SocketAddr::V6(v6)) => SocketAddr::V6(SocketAddrV6::new(MDNS_V6, MDNS_PORT, 0, v6.scope_id())),
-                    None => continue,
-                };
-                let _ = probe.socket.send_to(&query, &target.into());
+                probe.send(&query);
             }
         }
         if !any {

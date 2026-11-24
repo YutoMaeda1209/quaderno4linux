@@ -11,6 +11,7 @@ use std::os::fd::AsFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use nix::sys::termios::{self, SetArg};
 
@@ -38,6 +39,13 @@ pub enum UsbNetMode {
 }
 
 impl UsbNetMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            UsbNetMode::Rndis => "RNDIS",
+            UsbNetMode::CdcEcm => "CDC-ECM",
+        }
+    }
+
     pub fn command(self) -> [u8; 10] {
         let mode = match self {
             UsbNetMode::Rndis => 0x00,
@@ -186,7 +194,7 @@ pub fn scan() -> UsbState {
 
 /// 接続中でシリアルモードのままの端末をすべて USB Ethernet に切り替え、ネットワークインターフェース
 /// が現れるのを (最大 `timeout` まで) 待つ。
-pub fn ensure_ethernet(mode: UsbNetMode, timeout: std::time::Duration) -> Result<Vec<UsbInterface>> {
+pub fn ensure_ethernet(mode: UsbNetMode, timeout: Duration) -> Result<Vec<UsbInterface>> {
     let state = scan();
     if state.serial_ports.is_empty() && state.interfaces.is_empty() {
         return Err(Error::Usb("USB 接続された Quaderno が見つかりません".into()));
@@ -195,19 +203,19 @@ pub fn ensure_ethernet(mode: UsbNetMode, timeout: std::time::Duration) -> Result
         log::info!("{} を USB Ethernet モードに切り替えます", port.display());
         switch_to_ethernet(port, mode)?;
     }
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = Instant::now() + timeout;
     loop {
         let ifaces = find_network_interfaces();
         if !ifaces.is_empty() && (state.serial_ports.is_empty() || ifaces.iter().any(|i| i.up)) {
             return Ok(ifaces);
         }
-        if std::time::Instant::now() >= deadline {
+        if Instant::now() >= deadline {
             if !ifaces.is_empty() {
                 return Ok(ifaces);
             }
             return Err(Error::Usb("USB ネットワークインターフェースが現れませんでした".into()));
         }
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(300));
     }
 }
 
