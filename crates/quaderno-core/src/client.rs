@@ -1,4 +1,4 @@
-//! Authenticated client for the HTTPS API (port 8443).
+//! HTTPS API (ポート 8443) 用の認証済みクライアント。
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -21,21 +21,21 @@ use crate::error::{Error, Result};
 use crate::http::{build_client, check, http_url, https_url};
 use crate::model::{BatteryStatus, DeviceInfo, Entry, EntryList, StorageStatus, ROOT_FOLDER_ID};
 
-/// Reads the unauthenticated device information (`:8080/register/information`).
+/// 認証不要の端末情報 (`:8080/register/information`) を読み取る。
 pub fn device_information(addr: &DeviceAddress, timeout: Duration) -> Result<DeviceInfo> {
     let http = build_client(addr, Some(timeout))?;
     Ok(check(http.get(http_url("/register/information")).send()?)?.json()?)
 }
 
-/// Progress callback: `(bytes_done, bytes_total)` for the current file.
+/// 進捗コールバック: 現在のファイルの `(bytes_done, bytes_total)`。
 pub type Progress = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
-/// A progress callback that ignores updates.
+/// 更新を無視する進捗コールバック。
 pub fn no_progress() -> Progress {
     Arc::new(|_, _| {})
 }
 
-/// A connection to a paired device.
+/// ペアリング済みの端末への接続。
 pub struct DeviceClient {
     addr: DeviceAddress,
     http: Client,
@@ -44,7 +44,7 @@ pub struct DeviceClient {
 }
 
 impl DeviceClient {
-    /// Connects and authenticates.
+    /// 接続して認証する。
     pub fn connect(addr: DeviceAddress, credentials: Credentials) -> Result<Self> {
         let http = build_client(&addr, None)?;
         let client = Self { addr, http, credentials, cookie: Mutex::new(None) };
@@ -107,7 +107,7 @@ impl DeviceClient {
         req
     }
 
-    /// Sends a request, re-authenticating once if the session expired.
+    /// リクエストを送り、セッションが切れていれば 1 回だけ認証し直す。
     fn send(
         &self,
         method: Method,
@@ -130,13 +130,13 @@ impl DeviceClient {
         self.send(method, path, |r| Ok(r.json(&body).timeout(Duration::from_secs(60))))
     }
 
-    /// `GET /ping` – cheap check that the session is valid.
+    /// `GET /ping`: セッションが有効かを確かめる軽い確認。
     pub fn ping(&self) -> Result<()> {
         self.send(Method::GET, "/ping", |r| Ok(r.timeout(Duration::from_secs(10))))?;
         Ok(())
     }
 
-    // ----- status -------------------------------------------------------
+    // ----- 状態 ---------------------------------------------------------
 
     pub fn battery(&self) -> Result<BatteryStatus> {
         self.get_json("/system/status/battery")
@@ -151,20 +151,20 @@ impl DeviceClient {
         Ok(v.get("value").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| v.to_string()))
     }
 
-    // ----- browsing -----------------------------------------------------
+    // ----- 閲覧 ---------------------------------------------------------
 
-    /// Lists the entries of a folder (`root` for the top level).
+    /// フォルダ内の項目を列挙する (最上位は `root`)。
     pub fn list_folder(&self, folder_id: &str) -> Result<Vec<Entry>> {
         let list: EntryList = self.get_json(&format!("/folders/{}/entries", urlencoding::encode(folder_id)))?;
         Ok(list.entry_list)
     }
 
-    /// Resolves a device path such as `Document/Notes/a.pdf`.
+    /// `Document/Notes/a.pdf` のような端末上のパスを解決する。
     pub fn resolve_path(&self, path: &str) -> Result<Entry> {
         self.get_json(&format!("/resolve/entry/path/{}", urlencoding::encode(path)))
     }
 
-    /// Recursively lists every entry below `folder_id` (folders before their contents).
+    /// `folder_id` 以下のすべての項目を再帰的に列挙する (フォルダはその中身より先)。
     pub fn walk(&self, folder_id: &str) -> Result<Vec<Entry>> {
         let mut out = Vec::new();
         for entry in self.list_folder(folder_id)? {
@@ -178,9 +178,9 @@ impl DeviceClient {
         Ok(out)
     }
 
-    // ----- folders ------------------------------------------------------
+    // ----- フォルダ -----------------------------------------------------
 
-    /// Creates a folder and returns its id.
+    /// フォルダを作成し、その ID を返す。
     pub fn create_folder(&self, parent_id: &str, name: &str) -> Result<String> {
         #[derive(Deserialize)]
         struct Created {
@@ -191,9 +191,9 @@ impl DeviceClient {
         Ok(c.folder_id)
     }
 
-    // ----- generic operations -------------------------------------------
+    // ----- 共通の操作 ---------------------------------------------------
 
-    /// Deletes a document or (recursively) a folder.
+    /// 文書、またはフォルダ (再帰的に) を削除する。
     pub fn delete(&self, entry: &Entry) -> Result<()> {
         let path = if entry.is_folder() {
             format!("/folders/{}", urlencoding::encode(&entry.entry_id))
@@ -204,7 +204,7 @@ impl DeviceClient {
         Ok(())
     }
 
-    /// Renames an entry in place.
+    /// 項目の名前をその場で変更する。
     pub fn rename(&self, entry: &Entry, new_name: &str) -> Result<()> {
         if entry.is_folder() {
             let body = json!({ "folder_name": new_name });
@@ -216,7 +216,7 @@ impl DeviceClient {
         Ok(())
     }
 
-    /// Moves an entry into `dest_folder_id` (keeping its name).
+    /// 項目を (名前はそのままで) `dest_folder_id` に移動する。
     pub fn move_to(&self, entry: &Entry, dest_folder_id: &str) -> Result<()> {
         if entry.is_folder() {
             let body = json!({ "folder_name": entry.entry_name, "parent_folder_id": dest_folder_id });
@@ -228,8 +228,8 @@ impl DeviceClient {
         Ok(())
     }
 
-    /// Copies an entry into `dest_folder_id`. Folders are copied recursively.
-    /// `new_name` overrides the name of the copy.
+    /// 項目を `dest_folder_id` にコピーする。フォルダは再帰的にコピーする。`new_name` を指定すると
+    /// コピーの名前を変える。
     pub fn copy_to(&self, entry: &Entry, dest_folder_id: &str, new_name: Option<&str>) -> Result<()> {
         let name = new_name.unwrap_or(&entry.entry_name);
         if entry.is_folder() {
@@ -244,9 +244,9 @@ impl DeviceClient {
         Ok(())
     }
 
-    // ----- transfer -----------------------------------------------------
+    // ----- 転送 ---------------------------------------------------------
 
-    /// Uploads a local file into `parent_id` and returns the new document id.
+    /// ローカルのファイルを `parent_id` にアップロードし、新しい文書の ID を返す。
     pub fn upload_file(&self, local: &Path, parent_id: &str, progress: &Progress) -> Result<String> {
         #[derive(Deserialize)]
         struct Created {
@@ -271,14 +271,14 @@ impl DeviceClient {
             Ok(r.multipart(multipart::Form::new().part("file", part)))
         });
         if let Err(e) = result {
-            // Remove the empty placeholder document so a retry does not conflict.
+            // 再試行で競合しないよう、空のプレースホルダー文書を削除する。
             let _ = self.send(Method::DELETE, &format!("/documents/{}", created.document_id), Ok);
             return Err(e);
         }
         Ok(created.document_id)
     }
 
-    /// Uploads a local directory tree into `parent_id`.
+    /// ローカルのディレクトリツリーを `parent_id` にアップロードする。
     pub fn upload_dir(&self, local: &Path, parent_id: &str, progress: &Progress) -> Result<()> {
         let name = local
             .file_name()
@@ -297,7 +297,7 @@ impl DeviceClient {
         Ok(())
     }
 
-    /// Downloads a document to `dest` (a file path).
+    /// 文書を `dest` (ファイルパス) にダウンロードする。
     pub fn download_document(&self, document_id: &str, dest: &Path, progress: &Progress) -> Result<()> {
         let path = format!("/documents/{}/file", urlencoding::encode(document_id));
         let mut resp = self.send(Method::GET, &path, Ok)?;
@@ -321,7 +321,7 @@ impl DeviceClient {
         Ok(())
     }
 
-    /// Downloads an entry (document or whole folder) into the local directory `dest_dir`.
+    /// 項目 (文書またはフォルダ全体) をローカルのディレクトリ `dest_dir` にダウンロードする。
     pub fn download_entry(&self, entry: &Entry, dest_dir: &Path, progress: &Progress) -> Result<PathBuf> {
         let target = dest_dir.join(sanitize(&entry.entry_name));
         if entry.is_folder() {
@@ -335,13 +335,13 @@ impl DeviceClient {
         Ok(target)
     }
 
-    /// Lists the root folder (convenience).
+    /// ルートフォルダを列挙する (簡便のため)。
     pub fn list_root(&self) -> Result<Vec<Entry>> {
         self.list_folder(ROOT_FOLDER_ID)
     }
 }
 
-/// Replaces characters that are not allowed in local file names.
+/// ローカルのファイル名に使えない文字を置き換える。
 fn sanitize(name: &str) -> String {
     let s: String = name.chars().map(|c| if c == '/' || c == '\0' { '_' } else { c }).collect();
     match s.as_str() {

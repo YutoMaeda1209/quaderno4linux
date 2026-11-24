@@ -1,9 +1,9 @@
-//! USB connection support.
+//! USB 接続。
 //!
-//! When plugged in, the Quaderno enumerates as a USB serial (CDC-ACM) device
-//! (`04c5:1656`). Writing a 10-byte command to that serial port switches it to
-//! USB Ethernet mode (`04c5:1657`, RNDIS or CDC-ECM). The device then has to be
-//! reached through the IPv6 link-local address on the new network interface.
+//! Quaderno は接続すると USB シリアル (CDC-ACM) デバイス (`04c5:1656`) として認識される。
+//! そのシリアルポートに 10 バイトのコマンドを書き込むと、USB Ethernet モード (`04c5:1657`、
+//! RNDIS または CDC-ECM) に切り替わる。以降は新しいネットワークインターフェース上の
+//! IPv6 リンクローカルアドレスで端末に到達する。
 
 use std::fs;
 use std::io::Write;
@@ -17,23 +17,23 @@ use nix::sys::termios::{self, SetArg};
 use crate::error::{Error, Result};
 
 pub const VENDOR_ID: &str = "04c5";
-/// Product id while in serial (initial) mode.
+/// シリアル (初期) モードでのプロダクト ID。
 pub const PRODUCT_ID_SERIAL: &str = "1656";
-/// Product id while in USB Ethernet mode.
+/// USB Ethernet モードでのプロダクト ID。
 pub const PRODUCT_ID_ETHERNET: &str = "1657";
 
-/// udev rule that grants the logged-in user access to the serial port.
+/// ログイン中のユーザーにシリアルポートへのアクセスを許可する udev ルール。
 pub const UDEV_RULE: &str = include_str!("../../../packaging/linux/70-quaderno.rules");
 pub const UDEV_RULE_PATH: &str = "/etc/udev/rules.d/70-quaderno.rules";
-/// Where the deb / rpm package installs the rule.
+/// deb / rpm パッケージがルールをインストールする場所。
 pub const PACKAGED_UDEV_RULE_PATH: &str = "/usr/lib/udev/rules.d/70-quaderno.rules";
 
-/// USB Ethernet flavour to switch to.
+/// 切り替え先の USB Ethernet の方式。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsbNetMode {
-    /// RNDIS (works with the Linux `rndis_host` driver).
+    /// RNDIS (Linux の `rndis_host` ドライバで動作する)。
     Rndis,
-    /// CDC-ECM (`cdc_ether` driver).
+    /// CDC-ECM (`cdc_ether` ドライバ)。
     CdcEcm,
 }
 
@@ -47,7 +47,7 @@ impl UsbNetMode {
     }
 }
 
-/// Reads `idVendor`/`idProduct` from the closest USB device ancestor of a sysfs node.
+/// sysfs ノードに最も近い祖先の USB デバイスから `idVendor`/`idProduct` を読み取る。
 fn usb_ids(sysfs_device: &Path) -> Option<(String, String)> {
     let mut dir = fs::canonicalize(sysfs_device).ok()?;
     for _ in 0..6 {
@@ -63,7 +63,7 @@ fn usb_ids(sysfs_device: &Path) -> Option<(String, String)> {
     None
 }
 
-/// Serial ports (`/dev/ttyACM*`) that belong to a Quaderno in serial mode.
+/// シリアルモードの Quaderno のシリアルポート (`/dev/ttyACM*`)。
 pub fn find_serial_ports() -> Vec<PathBuf> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir("/sys/class/tty") else { return out };
@@ -82,16 +82,16 @@ pub fn find_serial_ports() -> Vec<PathBuf> {
     out
 }
 
-/// A USB Ethernet interface exposed by a Quaderno.
+/// Quaderno が提供する USB Ethernet インターフェース。
 #[derive(Clone, Debug)]
 pub struct UsbInterface {
     pub name: String,
     pub index: u32,
-    /// `true` when the interface is administratively up.
+    /// インターフェースが管理上有効 (up) なら `true`。
     pub up: bool,
 }
 
-/// Network interfaces that belong to a Quaderno in USB Ethernet mode.
+/// USB Ethernet モードの Quaderno のネットワークインターフェース。
 pub fn find_network_interfaces() -> Vec<UsbInterface> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir("/sys/class/net") else { return out };
@@ -113,7 +113,7 @@ pub fn find_network_interfaces() -> Vec<UsbInterface> {
     out
 }
 
-/// Sends the mode-switch command to a serial port.
+/// シリアルポートにモード切り替えのコマンドを送る。
 pub fn switch_to_ethernet(port: &Path, mode: UsbNetMode) -> Result<()> {
     let mut file =
         fs::OpenOptions::new().read(true).write(true).custom_flags(nix::libc::O_NOCTTY).open(port).map_err(|e| {
@@ -123,7 +123,7 @@ pub fn switch_to_ethernet(port: &Path, mode: UsbNetMode) -> Result<()> {
                 Error::Usb(format!("{} を開けません: {e}", port.display()))
             }
         })?;
-    // Raw mode: no echo, no newline conversion, 8N1.
+    // raw モード: エコーなし、改行の変換なし、8N1。
     let mut tio = termios::tcgetattr(file.as_fd()).map_err(|e| Error::Usb(e.to_string()))?;
     termios::cfmakeraw(&mut tio);
     termios::tcsetattr(file.as_fd(), SetArg::TCSANOW, &tio).map_err(|e| Error::Usb(e.to_string()))?;
@@ -133,18 +133,18 @@ pub fn switch_to_ethernet(port: &Path, mode: UsbNetMode) -> Result<()> {
     Ok(())
 }
 
-/// `true` when the bundled udev rule is installed with the current contents.
+/// 同梱の udev ルールが現在の内容でインストールされていれば `true`。
 pub fn udev_rule_installed() -> bool {
-    // A rule in /etc overrides the one the deb / rpm package installs under /usr/lib.
+    // /etc のルールは、deb / rpm パッケージが /usr/lib にインストールしたルールより優先される。
     fs::read_to_string(UDEV_RULE_PATH)
         .or_else(|_| fs::read_to_string(PACKAGED_UDEV_RULE_PATH))
         .is_ok_and(|s| s == UDEV_RULE)
 }
 
-/// Installs the bundled udev rule through `pkexec` (the desktop's polkit agent
-/// asks for the administrator password) and re-applies it to attached devices.
+/// 同梱の udev ルールを `pkexec` でインストールし (デスクトップの polkit エージェントが管理者パスワ
+/// ードを尋ねる)、接続中のデバイスに適用し直す。
 pub fn install_udev_rule() -> Result<()> {
-    // The rule is fed through stdin so no temporary file readable by root is needed.
+    // ルールは標準入力で渡すので、root が読める一時ファイルは必要ない。
     let script = format!(
         "set -e; umask 022; cat > {UDEV_RULE_PATH}; udevadm control --reload; \
          if [ $# -gt 0 ]; then udevadm trigger --settle --action=change \"$@\"; fi"
@@ -161,7 +161,7 @@ pub fn install_udev_rule() -> Result<()> {
     let output = child.wait_with_output()?;
     match output.status.code() {
         Some(0) => Ok(()),
-        // pkexec: 126 = the dialog was dismissed, 127 = not authorized or no polkit agent.
+        // pkexec: 126 = ダイアログが閉じられた、127 = 権限がないか polkit エージェントがない。
         Some(126) => Err(Error::Usb("udev ルールのインストールがキャンセルされました".into())),
         Some(127) => Err(Error::Usb(
             "管理者権限を取得できませんでした (polkit エージェントが動作しているか確認してください)".into(),
@@ -173,7 +173,7 @@ pub fn install_udev_rule() -> Result<()> {
     }
 }
 
-/// Current USB state of attached devices.
+/// 接続中のデバイスの現在の USB の状態。
 #[derive(Clone, Debug, Default)]
 pub struct UsbState {
     pub serial_ports: Vec<PathBuf>,
@@ -184,8 +184,8 @@ pub fn scan() -> UsbState {
     UsbState { serial_ports: find_serial_ports(), interfaces: find_network_interfaces() }
 }
 
-/// Switches every attached device that is still in serial mode to USB Ethernet
-/// and waits (up to `timeout`) for the network interface to appear.
+/// 接続中でシリアルモードのままの端末をすべて USB Ethernet に切り替え、ネットワークインターフェース
+/// が現れるのを (最大 `timeout` まで) 待つ。
 pub fn ensure_ethernet(mode: UsbNetMode, timeout: std::time::Duration) -> Result<Vec<UsbInterface>> {
     let state = scan();
     if state.serial_ports.is_empty() && state.interfaces.is_empty() {

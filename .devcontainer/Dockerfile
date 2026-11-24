@@ -1,8 +1,8 @@
 FROM mcr.microsoft.com/devcontainers/rust:2.1.7-1-trixie
 
-# Native libraries required to build GPUI.
-# libssl-dev, libfontconfig-dev, libfreetype-dev, libxcb1-dev and libzstd-dev
-# are already provided by the base image.
+# GPUI のビルドに必要なネイティブライブラリ。
+# libssl-dev、libfontconfig-dev、libfreetype-dev、libxcb1-dev、libzstd-dev は
+# ベースイメージに含まれている。
 RUN apt-get update \
   && export DEBIAN_FRONTEND=noninteractive \
   && apt-get install -y --no-install-recommends \
@@ -11,6 +11,6 @@ RUN apt-get update \
     libvulkan-dev \
   && rm -rf /var/lib/apt/lists/*
 
-# Tools that package the release as .deb and .rpm.
+# リリースを .deb と .rpm にパッケージするツール。
 RUN cargo install --locked cargo-deb@3.8.0 cargo-generate-rpm@0.21.1 \
   && rm -rf /usr/local/cargo/registry

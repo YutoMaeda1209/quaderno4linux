@@ -1,4 +1,4 @@
-//! Shared HTTP plumbing.
+//! 共通の HTTP 処理。
 
 use std::time::Duration;
 
@@ -8,11 +8,11 @@ use serde::Deserialize;
 use crate::address::{DeviceAddress, DEVICE_HOST, HTTPS_PORT, HTTP_PORT};
 use crate::error::{Error, Result};
 
-/// Builds a client that talks to `addr` through the placeholder host name.
-/// The device uses a self-signed certificate, so certificate verification is off.
+/// プレースホルダーのホスト名を通して `addr` と通信するクライアントを作る。端末は自己署名証明書を使
+/// うので、証明書の検証はしない。
 pub(crate) fn build_client(addr: &DeviceAddress, timeout: Option<Duration>) -> Result<Client> {
     let mut builder = Client::builder()
-        // The device is always on the local link/LAN: never use a system proxy.
+        // 端末は常にローカルリンクか LAN 上にあるので、システムのプロキシは使わない。
         .no_proxy()
         .resolve(DEVICE_HOST, addr.socket_addr(HTTPS_PORT))
         .danger_accept_invalid_certs(true)
@@ -39,7 +39,7 @@ struct ErrorBody {
     message: Option<String>,
 }
 
-/// Turns a non-success response into [`Error::Device`].
+/// 成功以外の応答を [`Error::Device`] に変換する。
 pub(crate) fn check(resp: Response) -> Result<Response> {
     let status = resp.status();
     if status.is_success() {

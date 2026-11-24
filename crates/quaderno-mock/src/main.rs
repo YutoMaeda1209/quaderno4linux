@@ -1,9 +1,9 @@
-//! Runs a simulated Quaderno so the desktop app can be developed without hardware.
+//! 実機なしでデスクトップアプリを開発できるよう、シミュレートした Quaderno を動かす。
 //!
 //! ```sh
 //! cargo run -p quaderno-mock -- 127.0.0.1 12345678
 //! ```
-//! Then connect to `127.0.0.1` in the app and pair with the PIN.
+//! そのあとアプリで `127.0.0.1` に接続し、PIN でペアリングする。
 
 use std::net::IpAddr;
 

@@ -1,11 +1,10 @@
-//! Device discovery via mDNS / DNS-SD.
+//! mDNS / DNS-SD による端末の検索。
 //!
-//! The Quaderno advertises `_dp_fujitsu._tcp.local.` (Sony DPT-RP1:
-//! `_digitalpaper._tcp.local.`). A one-shot "legacy unicast" query is sent from
-//! an ephemeral port on every interface (IPv4 `224.0.0.251` and IPv6
-//! `ff02::fb%iface`), so responders answer directly to our socket and no
-//! port-5353 listener (which would clash with Avahi) is needed. The source
-//! address of each answer – including the IPv6 scope – is the device address.
+//! Quaderno は `_dp_fujitsu._tcp.local.` を広告する (Sony DPT-RP1 は `_digitalpaper._tcp.local.`)。
+//! すべてのインターフェースで一時ポートから「レガシーユニキャスト」のクエリを 1 回送る
+//! (IPv4 は `224.0.0.251`、IPv6 は `ff02::fb%iface`)。応答側はこちらのソケットに直接応答するので、
+//! ポート 5353 で待ち受ける (Avahi と衝突する) 必要がない。各応答の送信元アドレス (IPv6 のスコープを含む) が
+//! 端末のアドレスになる。
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -25,14 +24,14 @@ const MDNS_PORT: u16 = 5353;
 const TYPE_PTR: u16 = 12;
 const TYPE_SRV: u16 = 33;
 
-/// How a device was reached.
+/// 端末に到達した経路。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Transport {
-    /// USB Ethernet (RNDIS / CDC-ECM).
+    /// USB Ethernet (RNDIS / CDC-ECM)。
     Usb,
-    /// Wi-Fi or another LAN interface.
+    /// Wi-Fi またはその他の LAN インターフェース。
     Network,
-    /// Bluetooth PAN (BNEP).
+    /// Bluetooth PAN (BNEP)。
     Bluetooth,
 }
 
@@ -56,7 +55,7 @@ impl Transport {
     }
 }
 
-/// A device found on the network.
+/// ネットワーク上で見つかった端末。
 #[derive(Clone, Debug)]
 pub struct DiscoveredDevice {
     pub address: DeviceAddress,
@@ -73,13 +72,13 @@ impl DiscoveredDevice {
     }
 }
 
-/// Builds a DNS query packet asking for PTR records of all service types.
+/// すべてのサービスタイプの PTR レコードを問い合わせる DNS クエリのパケットを組み立てる。
 fn build_query() -> Vec<u8> {
     let mut p = Vec::with_capacity(128);
-    p.extend_from_slice(&[0x00, 0x00]); // id
-    p.extend_from_slice(&[0x00, 0x00]); // flags: standard query
-    p.extend_from_slice(&(SERVICE_TYPES.len() as u16).to_be_bytes()); // qdcount
-    p.extend_from_slice(&[0, 0, 0, 0, 0, 0]); // an/ns/ar
+    p.extend_from_slice(&[0x00, 0x00]); // ID
+    p.extend_from_slice(&[0x00, 0x00]); // フラグ: 標準クエリ
+    p.extend_from_slice(&(SERVICE_TYPES.len() as u16).to_be_bytes()); // QDCOUNT
+    p.extend_from_slice(&[0, 0, 0, 0, 0, 0]); // ANCOUNT / NSCOUNT / ARCOUNT
     for service in SERVICE_TYPES {
         for label in service.split('.') {
             p.push(label.len() as u8);
@@ -87,12 +86,12 @@ fn build_query() -> Vec<u8> {
         }
         p.push(0);
         p.extend_from_slice(&TYPE_PTR.to_be_bytes());
-        p.extend_from_slice(&0x8001u16.to_be_bytes()); // QU bit + class IN
+        p.extend_from_slice(&0x8001u16.to_be_bytes()); // QU ビット + クラス IN
     }
     p
 }
 
-/// Reads a (possibly compressed) domain name starting at `pos`.
+/// `pos` から始まる (圧縮されている可能性のある) ドメイン名を読み取る。
 fn read_name(packet: &[u8], mut pos: usize) -> Option<(String, usize)> {
     let mut labels = Vec::new();
     let mut end = None;
@@ -122,7 +121,7 @@ fn read_name(packet: &[u8], mut pos: usize) -> Option<(String, usize)> {
     Some((labels.join("."), end.unwrap_or(pos)))
 }
 
-/// Parsed answer: whether it mentions one of our services, and the SRV port if present.
+/// 解析した応答: 対象のサービスに触れているかどうかと、あれば SRV のポート。
 #[derive(Debug, Default, PartialEq)]
 struct Answer {
     matches: bool,
@@ -131,7 +130,7 @@ struct Answer {
 
 fn parse_response(packet: &[u8]) -> Option<Answer> {
     if packet.len() < 12 || packet[2] & 0x80 == 0 {
-        return None; // not a response
+        return None; // 応答ではない
     }
     let count = |i: usize| u16::from_be_bytes([packet[i], packet[i + 1]]) as usize;
     let (qd, an, ns, ar) = (count(4), count(6), count(8), count(10));
@@ -198,7 +197,7 @@ fn open_probes() -> Vec<Probe> {
             }
         } else if let Some(v6) = addr.as_sockaddr_in6() {
             let ip = v6.ip();
-            // Query once per interface, from its link-local address.
+            // インターフェースごとに、そのリンクローカルアドレスから 1 回ずつ問い合わせる。
             if ip.segments()[0] & 0xffc0 != 0xfe80 {
                 continue;
             }
@@ -221,8 +220,7 @@ fn open_probes() -> Vec<Probe> {
     probes
 }
 
-/// Browses the network for devices for `wait` and verifies each by reading
-/// its device information.
+/// `wait` の間ネットワーク上の端末を探し、それぞれの端末情報を読み取って確かめる。
 pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
     let probes = open_probes();
     let usb_ifaces: HashSet<String> = crate::usb::find_network_interfaces().into_iter().map(|i| i.name).collect();
@@ -239,7 +237,7 @@ pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
             let mut buf = [std::mem::MaybeUninit::<u8>::uninit(); 9000];
             while let Ok((n, from)) = probe.socket.recv_from(&mut buf) {
                 any = true;
-                // SAFETY: recv_from initialised the first n bytes.
+                // SAFETY: recv_from が先頭の n バイトを初期化済み。
                 let data: Vec<u8> = buf[..n].iter().map(|b| unsafe { b.assume_init() }).collect();
                 let Some(answer) = parse_response(&data) else { continue };
                 if !answer.matches {
@@ -259,7 +257,7 @@ pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
                 });
             }
         }
-        // Re-send once halfway to cope with interfaces that just came up.
+        // 起動直後のインターフェースに備えて、途中で 1 回送り直す。
         if !resent && Instant::now() + wait / 2 >= deadline {
             resent = true;
             let query = build_query();
@@ -277,7 +275,7 @@ pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
         }
     }
 
-    // Verify and enrich in parallel.
+    // 確認と情報の補完を並列に行う。
     std::thread::scope(|s| {
         for dev in found.iter_mut() {
             s.spawn(move || {
@@ -285,9 +283,9 @@ pub fn discover(wait: Duration) -> Vec<DiscoveredDevice> {
             });
         }
     });
-    // Prefer verified devices; drop duplicates of the same serial on the same transport.
-    // The device answers over IPv4 and IPv6: USB has only link-local addressing and
-    // IPv6 is stable there, while on Wi-Fi / Bluetooth the IPv4 address is preferred.
+    // 確認済みの端末を優先し、同じ経路で同じシリアル番号の重複を除く。端末は IPv4 と IPv6 の両方で
+    // 応答する。USB はリンクローカルだけで IPv6 が安定しているが、Wi-Fi / Bluetooth では IPv4 を優
+    // 先する。
     found.sort_by_key(|d| {
         let v4 = matches!(d.address.ip, IpAddr::V4(_));
         (d.transport, d.info.is_none(), if d.transport == Transport::Usb { v4 } else { !v4 })
@@ -313,7 +311,7 @@ mod tests {
 
     #[test]
     fn parse_ptr_and_srv() {
-        // Response with PTR + SRV, the SRV name compressed against the PTR rdata.
+        // PTR と SRV を含む応答。SRV の名前は PTR の rdata を参照して圧縮している。
         let mut p = vec![0, 0, 0x84, 0, 0, 0, 0, 2, 0, 0, 0, 0];
         // PTR: _dp_fujitsu._tcp.local -> Quaderno._dp_fujitsu._tcp.local
         let svc_off = p.len();

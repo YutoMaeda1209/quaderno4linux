@@ -1,4 +1,4 @@
-//! Background work with progress reporting.
+//! 進捗表示付きのバックグラウンド処理。
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,7 +15,7 @@ pub struct ProgressState {
     pub total: u64,
 }
 
-/// Shared progress of the running background task.
+/// 実行中のバックグラウンドタスクの共有の進捗。
 #[derive(Clone)]
 pub struct TaskProgress(Arc<Mutex<ProgressState>>);
 
@@ -28,7 +28,7 @@ impl TaskProgress {
         self.0.lock().unwrap().clone()
     }
 
-    /// Sets the item currently being processed and resets the byte counter.
+    /// 現在処理中の項目を設定し、バイト数のカウンタをリセットする。
     pub fn set_detail(&self, detail: impl Into<String>) {
         let mut s = self.0.lock().unwrap();
         s.detail = detail.into();
@@ -36,7 +36,7 @@ impl TaskProgress {
         s.total = 0;
     }
 
-    /// Byte-level progress callback for core transfer functions.
+    /// core の転送関数に渡すバイト単位の進捗コールバック。
     pub fn callback(&self) -> quaderno_core::Progress {
         let inner = self.0.clone();
         Arc::new(move |done, total| {
@@ -46,7 +46,7 @@ impl TaskProgress {
         })
     }
 
-    /// Fraction (0–100) of the current transfer, if known.
+    /// 現在の転送の割合 (0〜100)。わかる場合のみ。
     pub fn percent(&self) -> Option<f32> {
         let s = self.0.lock().unwrap();
         (s.total > 0).then(|| (s.done as f32 / s.total as f32 * 100.0).min(100.0))
@@ -54,8 +54,8 @@ impl TaskProgress {
 }
 
 impl QuadernoApp {
-    /// Runs `work` on a background thread while the UI shows a busy indicator,
-    /// then calls `done` on the UI thread with the result.
+    /// UI に処理中の表示を出しながら `work` をバックグラウンドスレッドで実行し、完了したら UI スレ
+    /// ッドで結果を渡して `done` を呼ぶ。
     pub fn run_task<R: Send + 'static>(
         &mut self,
         label: impl Into<String>,
@@ -77,7 +77,7 @@ impl QuadernoApp {
             async move { work(progress) }
         });
 
-        // Repaint periodically so progress is visible.
+        // 進捗が見えるよう、定期的に再描画する。
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(150)).await;
             let running = this

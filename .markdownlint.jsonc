@@ -1,4 +1,4 @@
 {
-  // Table rows cannot be wrapped.
+  // 表の行は折り返せない。
   "MD013": { "tables": false }
 }

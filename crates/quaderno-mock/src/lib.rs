@@ -1,9 +1,8 @@
-//! A simulated Quaderno device.
+//! シミュレートした Quaderno 端末。
 //!
-//! Implements the device side of the pairing protocol (port 8080) and the
-//! authenticated document API (port 8443, self-signed TLS) with an in-memory
-//! file tree. Used by the integration tests and for UI development without
-//! hardware (`cargo run -p quaderno-mock`).
+//! ペアリングプロトコル (ポート 8080) と認証済みの文書 API (ポート 8443、自己署名の TLS) の端末側を、
+//! メモリ上のファイルツリーで実装する。結合テストと、実機なしでの UI 開発
+//! (`cargo run -p quaderno-mock`) に使う。
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -27,8 +26,8 @@ type Resp = Response<std::io::Cursor<Vec<u8>>>;
 enum Kind {
     Folder,
     Document(Vec<u8>),
-    /// Created by `POST /documents2` before a file is uploaded. Frames are hidden
-    /// from listings and only conflict on name once a file is uploaded.
+    /// ファイルのアップロード前に `POST /documents2` で作られる。フレームは一覧に表示されず、ファイ
+    /// ルがアップロードされてはじめて名前が競合する。
     Frame,
 }
 
@@ -42,12 +41,12 @@ struct Node {
     modified: String,
 }
 
-/// Pairing state between `/register/pin` and `/register`.
+/// `/register/pin` から `/register` までのペアリングの状態。
 struct Pairing {
     dh: DiffieHellman,
     n1: [u8; 16],
     mac: [u8; 6],
-    /// Public key as sent on the wire (Java `BigInteger.toByteArray()` form).
+    /// 送信したままの公開鍵 (Java の `BigInteger.toByteArray()` の形式)。
     yb: Vec<u8>,
     keys: Option<SessionKeys>,
     n2: Vec<u8>,
@@ -71,7 +70,7 @@ struct State {
     next_id: u64,
 }
 
-/// Handle of a running mock device.
+/// 実行中のモック端末のハンドル。
 pub struct MockDevice {
     state: Arc<Mutex<State>>,
     _threads: Vec<JoinHandle<()>>,
@@ -79,7 +78,7 @@ pub struct MockDevice {
 }
 
 impl MockDevice {
-    /// Starts the HTTP (8080) and HTTPS (8443) servers on `ip`.
+    /// `ip` で HTTP (8080) と HTTPS (8443) のサーバーを起動する。
     pub fn start(ip: IpAddr, pin: &str) -> Result<Self> {
         let mut nodes = HashMap::new();
         nodes.insert(
@@ -129,7 +128,7 @@ impl MockDevice {
         Ok(Self { state, _threads: threads, ip })
     }
 
-    /// Adds a document with the given content to a folder (default: root).
+    /// 指定した内容の文書をフォルダ (既定はルート) に追加する。
     pub fn add_document(&self, parent: &str, name: &str, data: &[u8]) -> String {
         let mut s = self.state.lock().unwrap();
         let id = s.new_id();
@@ -164,7 +163,7 @@ impl MockDevice {
         id
     }
 
-    /// Path → content of every document (for assertions).
+    /// すべての文書のパスと内容の対応 (アサーション用)。
     pub fn documents(&self) -> HashMap<String, Vec<u8>> {
         let s = self.state.lock().unwrap();
         s.nodes
@@ -176,7 +175,7 @@ impl MockDevice {
             .collect()
     }
 
-    /// Paths of every folder (for assertions).
+    /// すべてのフォルダのパス (アサーション用)。
     pub fn folders(&self) -> Vec<String> {
         let s = self.state.lock().unwrap();
         let mut v: Vec<_> =
@@ -188,7 +187,7 @@ impl MockDevice {
 
 fn now() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    // Civil-from-days (UTC), good enough for display.
+    // 日数から暦日への変換 (UTC)。表示用には十分。
     let days = secs / 86_400;
     let rem = secs % 86_400;
     let z = days as i64 + 719_468;
@@ -368,7 +367,7 @@ fn register(state: &Arc<Mutex<State>>, method: &Method, path: &str, body: &[u8])
             anyhow::ensure!(n1 == p.n1 && mac == p.mac, "nonce/mac mismatch");
             let zz = p.dh.shared_secret(&normalize_dh(&ya)?)?;
             let keys = SessionKeys::derive(&zz, &[n1.as_slice(), &mac, &n2].concat());
-            // Like the device, HMAC over YB exactly as it was sent.
+            // 端末と同じく、送られてきたとおりの YB に対して HMAC を計算する。
             if keys.hmac(&[&n1, &mac, &p.yb, &n1, &n2, &mac, &ya])[..] != m2[..] {
                 return Ok(err(403, "40300", "Bad parameters for registration process"));
             }
@@ -442,7 +441,7 @@ fn api(
     let seg = segs(path);
     let seg: Vec<&str> = seg.iter().map(String::as_str).collect();
 
-    // --- authentication (no cookie needed) ---
+    // --- 認証 (クッキー不要) ---
     match (method, seg.as_slice()) {
         (Method::Get, ["auth", "nonce", id]) => {
             if !s.clients.contains_key(*id) {
@@ -570,8 +569,8 @@ fn api(
             if !s.is_folder(&parent) {
                 return Ok(err(404, "40401", "parent not found"));
             }
-            // A new frame replaces an older frame of the same name; real documents
-            // only conflict when the file is uploaded.
+            // 新しいフレームは同じ名前の古いフレームを置き換える。実際の文書はファイルのアップロー
+            // ド時にだけ競合する。
             s.nodes.retain(|_, n| {
                 !(matches!(n.kind, Kind::Frame) && n.name == name && n.parent.as_deref() == Some(&parent))
             });
@@ -656,8 +655,8 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Minimal two's-complement big-endian encoding, like Java's `BigInteger.toByteArray()`:
-/// a 0x00 byte is prepended when the top bit is set (257 bytes for most keys).
+/// Java の `BigInteger.toByteArray()` と同じ、最小限の 2 の補数のビッグエンディアン表現。最上位ビッ
+/// トが立っていると 0x00 を先頭に付ける (ほとんどの鍵で 257 バイトになる)。
 fn java_bytes(n: &[u8]) -> Vec<u8> {
     let start = n.iter().position(|&b| b != 0).unwrap_or(n.len() - 1);
     let mut out = Vec::with_capacity(n.len() + 1);

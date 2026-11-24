@@ -1,14 +1,12 @@
-//! Bluetooth connection support (Classic Bluetooth PAN).
+//! Bluetooth 接続 (Classic Bluetooth PAN)。
 //!
-//! The Quaderno offers the NAP service (`0x1116`); the PC connects as PANU and
-//! IP runs over BNEP. Pairing (SSP numeric comparison) only works while the
-//! device's Bluetooth pairing screen is open and is done in the desktop's
-//! Bluetooth settings. The device does not answer DHCP on this link, so the PC
-//! side needs a static IPv4 address; the device was observed at `172.25.48.1`.
+//! Quaderno は NAP サービス (`0x1116`) を提供し、PC は PANU として接続して BNEP 上で IP 通信する。
+//! ペアリング (SSP の数値比較) は端末の Bluetooth ペアリング画面を開いている間だけ可能で、
+//! デスクトップの Bluetooth 設定から行う。端末はこのリンク上で DHCP に応答しないので、PC 側には
+//! 固定の IPv4 アドレスが必要になる。端末のアドレスは `172.25.48.1` だった。
 //!
-//! Paired devices are listed with BlueZ's `bluetoothctl`, and the PAN link is
-//! brought up through NetworkManager (`nmcli`) with a dedicated connection
-//! profile that uses a manual address.
+//! ペアリング済みの端末は BlueZ の `bluetoothctl` で列挙し、PAN リンクは手動アドレスを使う専用の
+//! 接続プロファイルで NetworkManager (`nmcli`) から確立する。
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr};
@@ -20,38 +18,38 @@ use crate::client::device_information;
 use crate::discovery::{discover, Transport};
 use crate::error::{Error, Result};
 
-/// Bluetooth NAP (Network Access Point) service class UUID.
+/// Bluetooth NAP (Network Access Point) サービスクラスの UUID。
 pub const NAP_UUID: &str = "00001116-0000-1000-8000-00805f9b34fb";
-/// Address the device was observed to use on the PAN link.
+/// PAN リンク上で端末が使っていたアドレス。
 pub const DEFAULT_DEVICE_IP: Ipv4Addr = Ipv4Addr::new(172, 25, 48, 1);
-/// Static address (with prefix) given to the PC side of the PAN link.
+/// PAN リンクの PC 側に割り当てる固定アドレス (プレフィックス付き)。
 pub const HOST_ADDRESS: &str = "172.25.48.2/24";
-/// BNEP links are flaky right after connecting; retry this many times.
+/// BNEP リンクは接続直後に不安定なので、この回数だけ再試行する。
 const CONNECT_ATTEMPTS: usize = 3;
 
-/// A paired Bluetooth device that offers the NAP service.
+/// NAP サービスを提供するペアリング済みの Bluetooth 端末。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BluetoothDevice {
-    /// BD address, e.g. `AA:BB:CC:DD:EE:2E`.
+    /// BD アドレス (例: `AA:BB:CC:DD:EE:2E`)。
     pub address: String,
-    /// Name, e.g. `FMVDP51_1234567`.
+    /// 名前 (例: `FMVDP51_1234567`)。
     pub name: String,
     pub connected: bool,
 }
 
 impl BluetoothDevice {
-    /// Whether the name looks like a Quaderno (`FMVDP51_<serial>`, ...).
+    /// 名前が Quaderno らしいか (`FMVDP51_<serial>` など)。
     pub fn is_quaderno(&self) -> bool {
         self.name.starts_with("FMVDP")
     }
 
-    /// Name of the NetworkManager profile this app manages for the device.
+    /// このアプリが端末用に管理する NetworkManager のプロファイル名。
     pub fn connection_name(&self) -> String {
         format!("Quaderno Bluetooth {}", self.address)
     }
 }
 
-/// Whether a network interface is a Bluetooth (BNEP) interface.
+/// ネットワークインターフェースが Bluetooth (BNEP) のものか。
 pub fn is_bluetooth_interface(name: &str) -> bool {
     if name.starts_with("bnep") {
         return true;
@@ -111,7 +109,7 @@ fn install_hint(program: &str) -> &'static str {
     }
 }
 
-/// Parses `bluetoothctl devices` output (`Device AA:BB:.. Name`).
+/// `bluetoothctl devices` の出力 (`Device AA:BB:.. Name`) を解析する。
 fn parse_device_list(out: &str) -> Vec<(String, String)> {
     out.lines()
         .filter_map(|l| {
@@ -122,7 +120,7 @@ fn parse_device_list(out: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Parsed `bluetoothctl info` output.
+/// `bluetoothctl info` の解析結果。
 #[derive(Debug, Default, PartialEq)]
 struct Info {
     name: Option<String>,
@@ -148,10 +146,11 @@ fn parse_info(out: &str) -> Info {
     info
 }
 
-/// Lists paired devices that offer the NAP service, Quaderno devices first.
+/// NAP サービスを提供するペアリング済みの端末を、Quaderno を先にして列挙する。
 pub fn paired_devices() -> Result<Vec<BluetoothDevice>> {
     let t = Duration::from_secs(10);
-    // `devices Paired` needs BlueZ >= 5.65; older versions have `paired-devices`.
+    // `devices Paired` は BlueZ 5.65 以降が必要。それより古いバージョンでは `paired-devices` を使う
+    // 。
     let list = match run("bluetoothctl", &["devices", "Paired"], t) {
         Ok(out) if !out.trim().is_empty() => out,
         _ => run("bluetoothctl", &["paired-devices"], t).unwrap_or_default(),
@@ -168,14 +167,14 @@ pub fn paired_devices() -> Result<Vec<BluetoothDevice>> {
     Ok(devices)
 }
 
-/// Arguments for creating/updating the NetworkManager PANU profile.
+/// NetworkManager の PANU プロファイルを作成・更新するための引数。
 fn profile_settings(dev: &BluetoothDevice) -> Vec<String> {
     let mut args: Vec<String> = [
         "bluetooth.bdaddr",
         &dev.address,
         "bluetooth.type",
         "panu",
-        // The device does not answer DHCP on the PAN link.
+        // 端末は PAN リンク上で DHCP に応答しない。
         "ipv4.method",
         "manual",
         "ipv4.addresses",
@@ -190,7 +189,7 @@ fn profile_settings(dev: &BluetoothDevice) -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
-    // A profile owned by the current user can be managed without admin rights.
+    // 現在のユーザーが所有するプロファイルは管理者権限なしで管理できる。
     if let Ok(user) = std::env::var("USER") {
         if !user.is_empty() && user != "root" {
             args.extend(["connection.permissions".to_string(), format!("user:{user}")]);
@@ -199,7 +198,7 @@ fn profile_settings(dev: &BluetoothDevice) -> Vec<String> {
     args
 }
 
-/// Brings up the PAN link to `dev` and returns the network interface name.
+/// `dev` との PAN リンクを確立し、ネットワークインターフェース名を返す。
 pub fn connect_pan(dev: &BluetoothDevice) -> Result<String> {
     let name = dev.connection_name();
     let t = Duration::from_secs(20);
@@ -248,12 +247,12 @@ pub fn connect_pan(dev: &BluetoothDevice) -> Result<String> {
         .ok_or_else(|| Error::Bluetooth("Bluetooth のネットワークインターフェースが見つかりません".into()))
 }
 
-/// Takes the PAN link down (errors are ignored).
+/// PAN リンクを切断する (エラーは無視する)。
 pub fn disconnect_pan(dev: &BluetoothDevice) {
     let _ = run("nmcli", &["connection", "down", &dev.connection_name()], Duration::from_secs(20));
 }
 
-/// Bluetooth network interfaces currently present.
+/// 現在存在する Bluetooth のネットワークインターフェース。
 pub fn bluetooth_interfaces() -> Vec<String> {
     let mut out: Vec<String> = std::fs::read_dir("/sys/class/net")
         .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
@@ -263,8 +262,8 @@ pub fn bluetooth_interfaces() -> Vec<String> {
     out
 }
 
-/// Finds the device on an established PAN link: mDNS first (it works over
-/// PAN), then the address the device was observed to use.
+/// 確立した PAN リンク上で端末を探す。まず mDNS (PAN 上でも使える) を試し、次に端末が使っていたアド
+/// レスを試す。
 pub fn locate_device(iface: &str) -> Result<DeviceAddress> {
     for _ in 0..3 {
         let found = discover(Duration::from_millis(2000));

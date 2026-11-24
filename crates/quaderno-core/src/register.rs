@@ -1,16 +1,16 @@
-//! Pairing ("registration") of this client with a device.
+//! このクライアントと端末のペアリング (「登録」)。
 //!
-//! The exchange runs over plain HTTP on port 8080:
+//! やり取りはポート 8080 の平文の HTTP で行う。
 //!
 //! 1. `PUT  /register/cleanup`
-//! 2. `POST /register/pin`   → M1 `{a: N1, b: MAC, c: YB}` (device shows an 8-digit PIN)
+//! 2. `POST /register/pin`   → M1 `{a: N1, b: MAC, c: YB}` (端末に 8 桁の PIN が表示される)
 //! 3. `POST /register/hash`  ← M2 `{a: N1, b: N2, c: MAC, d: YA, e: HMAC}` → M3 `{a: N2, b: eHash, e: HMAC}`
 //! 4. `POST /register/ca`    ← M4 `{a: N1, b: rHash, d: wrap(RS), e: HMAC}` → M5 `{a: N2, d: wrap(ES||cert), e: HMAC}`
 //! 5. `POST /register`       ← M6 `{a: N1, d: wrap(client_id||pubkey), e: HMAC}`
 //! 6. `PUT  /register/cleanup`
 //!
-//! Steps 1–3 run in [`Registration::start`]; the remaining steps run in
-//! [`Registration::finish`] once the user has typed the PIN shown on screen.
+//! 手順 1〜3 は [`Registration::start`] で実行し、残りの手順は画面に表示された PIN をユーザーが
+//! 入力したあと [`Registration::finish`] で実行する。
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -49,21 +49,21 @@ fn b64(data: &[u8]) -> String {
     B64.encode(data)
 }
 
-/// A pairing in progress: the device is displaying its PIN.
+/// 進行中のペアリング。端末は PIN を表示している。
 pub struct Registration {
     http: Client,
     keys: SessionKeys,
     n1: Vec<u8>,
     n2: [u8; 16],
     ya: Vec<u8>,
-    /// Device public key exactly as received (may carry a leading 0x00 sign byte).
+    /// 受け取ったままの端末の公開鍵 (先頭に符号用の 0x00 が付いていることがある)。
     yb: Vec<u8>,
     e_hash: Vec<u8>,
     m3_hmac: Vec<u8>,
 }
 
 impl Registration {
-    /// Runs the first half of the exchange. Afterwards the device shows a PIN.
+    /// やり取りの前半を実行する。完了すると端末に PIN が表示される。
     pub fn start(addr: &DeviceAddress) -> Result<Self> {
         let http = build_client(addr, Some(std::time::Duration::from_secs(30)))?;
         check(http.put(http_url("/register/cleanup")).send()?)?;
@@ -71,9 +71,9 @@ impl Registration {
         let m1: Msg = check(http.post(http_url("/register/pin")).send()?)?.json()?;
         let n1 = field(&m1.a, "a")?;
         let mac = field(&m1.b, "b")?;
-        // YB must enter the HMACs exactly as sent: the device serialises it with Java's
-        // BigInteger.toByteArray(), which may prepend 0x00 (257 bytes). Re-padding to
-        // 256 bytes makes the device reject the exchange with 403.
+        // YB は送られてきたとおりのバイト列で HMAC に入れる必要がある。端末は Java の
+        // BigInteger.toByteArray() でシリアライズするので、先頭に 0x00 が付くことがある (257 バイト
+        // )。256 バイトに詰め直すと、端末は 403 でやり取りを拒否する。
         let yb = field(&m1.c, "c")?;
 
         let n2: [u8; 16] = random_bytes();
@@ -102,10 +102,10 @@ impl Registration {
         Ok(Self { http, keys, n1, n2, ya, yb, e_hash, m3_hmac })
     }
 
-    /// Completes the exchange with the PIN shown on the device and returns new credentials.
+    /// 端末に表示された PIN でやり取りを完了し、新しい認証情報を返す。
     pub fn finish(self, pin: &str) -> Result<Credentials> {
         let result = self.finish_inner(pin.trim());
-        // Always leave the device in a clean state.
+        // 端末は必ずきれいな状態に戻しておく。
         let _ = self.http.put(http_url("/register/cleanup")).send();
         result
     }

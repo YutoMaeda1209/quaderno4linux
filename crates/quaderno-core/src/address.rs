@@ -1,28 +1,27 @@
-//! Device addressing.
+//! 端末のアドレス指定。
 //!
-//! Over USB the Quaderno is only reachable through an IPv6 link-local address,
-//! which needs a zone (scope) identifier such as `fe80::1%usb0`. URLs cannot carry
-//! zone identifiers reliably, so the HTTP client always talks to a fixed
-//! placeholder host name and overrides DNS resolution with the real socket
-//! address (including the scope id).
+//! USB 経由の Quaderno には IPv6 リンクローカルアドレスでしか到達できず、`fe80::1%usb0` のような
+//! ゾーン (スコープ) ID が必要になる。URL にはゾーン ID を確実には含められないため、HTTP クライアントは
+//! 常に固定のプレースホルダーのホスト名に接続し、名前解決を実際のソケットアドレス (スコープ ID を含む) で
+//! 上書きする。
 
 use std::fmt;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, ToSocketAddrs};
 
 use crate::error::{Error, Result};
 
-/// Placeholder host name used in request URLs.
+/// リクエストの URL に使うプレースホルダーのホスト名。
 pub const DEVICE_HOST: &str = "quaderno.device";
-/// Unauthenticated HTTP port (registration, device information).
+/// 認証不要の HTTP ポート (登録、端末情報)。
 pub const HTTP_PORT: u16 = 8080;
-/// Authenticated HTTPS port (main API).
+/// 認証が必要な HTTPS ポート (メインの API)。
 pub const HTTPS_PORT: u16 = 8443;
 
-/// A resolved device address.
+/// 名前解決済みの端末アドレス。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DeviceAddress {
     pub ip: IpAddr,
-    /// IPv6 scope (interface index); 0 when not applicable.
+    /// IPv6 のスコープ (インターフェースのインデックス)。該当しない場合は 0。
     pub scope_id: u32,
 }
 
@@ -31,8 +30,8 @@ impl DeviceAddress {
         Self { ip, scope_id }
     }
 
-    /// Parses `192.168.0.10`, `fe80::1%usb0`, `fe80::1%3`, `[fe80::1%usb0]` or a
-    /// resolvable host name (`Android.local`, ...).
+    /// `192.168.0.10`、`fe80::1%usb0`、`fe80::1%3`、`[fe80::1%usb0]`、または名前解決できるホスト名
+    /// (`Android.local` など) を解析する。
     pub fn parse(input: &str) -> Result<Self> {
         let s = input.trim().trim_start_matches('[').trim_end_matches(']');
         if s.is_empty() {
@@ -72,7 +71,7 @@ impl DeviceAddress {
         }
     }
 
-    /// Name of the interface for scoped addresses.
+    /// スコープ付きアドレスのインターフェース名。
     pub fn interface_name(&self) -> Option<String> {
         if self.scope_id == 0 {
             return None;

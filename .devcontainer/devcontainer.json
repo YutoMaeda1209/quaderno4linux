@@ -1,4 +1,4 @@
-// For format details, see https://aka.ms/devcontainer.json.
+// 書式の詳細は https://aka.ms/devcontainer.json を参照。
 {
   "name": "Quaderno4Linux",
   "dockerComposeFile": "docker-compose.yml",

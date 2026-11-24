@@ -1,9 +1,9 @@
-//! Cryptographic primitives used by the registration (pairing) protocol.
+//! 登録 (ペアリング) プロトコルで使う暗号プリミティブ。
 //!
-//! * Diffie-Hellman over the RFC 3526 2048-bit MODP group (group 14, g = 2)
-//! * PBKDF2-HMAC-SHA256 key derivation
-//! * HMAC-SHA256 message authentication
-//! * AES-128-CBC "key wrap" (`AES-CBC(PKCS7(data || HMAC(data)[..8])) || IV`)
+//! * RFC 3526 の 2048 ビット MODP グループ (グループ 14、g = 2) 上の Diffie-Hellman
+//! * PBKDF2-HMAC-SHA256 による鍵導出
+//! * HMAC-SHA256 によるメッセージ認証
+//! * AES-128-CBC の「鍵ラップ」 (`AES-CBC(PKCS7(data || HMAC(data)[..8])) || IV`)
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use hmac::{Hmac, Mac};
@@ -17,7 +17,7 @@ type HmacSha256 = Hmac<Sha256>;
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
-/// RFC 3526, 2048-bit MODP group (id 14).
+/// RFC 3526 の 2048 ビット MODP グループ (ID 14)。
 const MODP_2048_HEX: &str = concat!(
     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1",
     "29024E088A67CC74020BBEA63B139B22514A08798E3404DD",
@@ -32,10 +32,10 @@ const MODP_2048_HEX: &str = concat!(
     "15728E5A8AACAA68FFFFFFFFFFFFFFFF",
 );
 
-/// Length in bytes of a group-14 element.
+/// グループ 14 の要素のバイト長。
 pub const DH_LEN: usize = 256;
 
-/// Ephemeral Diffie-Hellman key pair.
+/// 一時的な Diffie-Hellman 鍵ペア。
 pub struct DiffieHellman {
     prime: BigUint,
     secret: BigUint,
@@ -49,13 +49,13 @@ impl DiffieHellman {
         Self { prime, secret }
     }
 
-    /// Public value `g^a mod p` as 256 big-endian bytes.
+    /// 公開値 `g^a mod p` (256 バイトのビッグエンディアン)。
     pub fn public_key(&self) -> [u8; DH_LEN] {
         let public = BigUint::from(2u8).modpow(&self.secret, &self.prime);
         to_fixed(&public)
     }
 
-    /// Shared secret `peer^a mod p` as 256 big-endian bytes.
+    /// 共有秘密 `peer^a mod p` (256 バイトのビッグエンディアン)。
     pub fn shared_secret(&self, peer: &[u8]) -> Result<[u8; DH_LEN]> {
         let peer = BigUint::from_bytes_be(peer);
         if peer <= BigUint::from(1u8) || peer >= &self.prime - 1u8 {
@@ -78,8 +78,8 @@ fn to_fixed(n: &BigUint) -> [u8; DH_LEN] {
     out
 }
 
-/// Normalises a big-endian integer received from the device to exactly 256 bytes
-/// (the device may prepend a `0x00` sign byte).
+/// 端末から受け取ったビッグエンディアンの整数を、ちょうど 256 バイトに揃える (端末は符号用の `0x00`
+/// を先頭に付けることがある)。
 pub fn normalize_dh(bytes: &[u8]) -> Result<[u8; DH_LEN]> {
     let n = BigUint::from_bytes_be(bytes);
     if n.bits() > (DH_LEN * 8) as u64 {
@@ -94,7 +94,7 @@ pub fn pbkdf2_sha256(password: &[u8], salt: &[u8], iterations: u32, len: usize) 
     out
 }
 
-/// HMAC-SHA256 over the concatenation of `parts`.
+/// `parts` を連結したものに対する HMAC-SHA256。
 pub fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     for part in parts {
@@ -109,7 +109,7 @@ pub fn random_bytes<const N: usize>() -> [u8; N] {
     out
 }
 
-/// Session keys derived from the DH exchange.
+/// DH 鍵交換から導出したセッション鍵。
 pub struct SessionKeys {
     pub auth_key: [u8; 32],
     pub key_wrap_key: [u8; 16],
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn pbkdf2_known_vector() {
-        // RFC 7914 section 11 (PBKDF2-HMAC-SHA256, c = 1)
+        // RFC 7914 11 節 (PBKDF2-HMAC-SHA256、c = 1)
         let out = pbkdf2_sha256(b"passwd", b"salt", 1, 16);
         assert_eq!(
             out,

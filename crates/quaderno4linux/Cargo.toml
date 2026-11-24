@@ -13,9 +13,9 @@ log.workspace = true
 gpui-kit = "0.11.0"
 env_logger = "0.11"
 dirs = "6"
-# Not used directly. Debug builds of rust-embed read the icons from the source
-# directory at run time, which does not exist when a binary built in the dev
-# container runs on the host; `debug-embed` embeds them as in release builds.
+# 直接は使っていない。rust-embed の debug ビルドは実行時にソースディレクトリから
+# アイコンを読むが、Dev Container でビルドしたバイナリをホストで動かすとその
+# ディレクトリがない。`debug-embed` で release ビルドと同じく埋め込む。
 rust-embed = { version = "8", features = ["debug-embed"] }
 
 [package.metadata.deb]
@@ -24,7 +24,7 @@ copyright = "2026 YutoMaeda1209"
 license-file = ["../../LICENSE", "0"]
 extended-description = "Manage documents on Fujitsu Quaderno (Sony DPT-RP1 family) e-paper devices over USB, Wi-Fi and Bluetooth."
 section = "utils"
-# Vulkan and Wayland are loaded at run time, so `$auto` does not find them.
+# Vulkan と Wayland は実行時に読み込むので、`$auto` では検出されない。
 depends = "$auto, libvulkan1, mesa-vulkan-drivers | vulkan-icd, libwayland-client0"
 recommends = "xdg-desktop-portal, bluez, network-manager"
 maintainer-scripts = "../../packaging/linux/deb"

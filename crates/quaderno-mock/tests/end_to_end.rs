@@ -1,4 +1,4 @@
-//! Pairs with the mock device and exercises every file operation of the client.
+//! モック端末とペアリングし、クライアントのすべてのファイル操作を試す。
 
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -7,7 +7,7 @@ use quaderno_mock::MockDevice;
 
 #[test]
 fn pairing_and_file_operations() {
-    // 127.0.0.2 keeps clear of anything a developer runs on 127.0.0.1.
+    // 127.0.0.2 を使い、開発者が 127.0.0.1 で動かしているものと干渉しないようにする。
     let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
     let device = MockDevice::start(ip, "87654321").expect("start mock");
     let addr = DeviceAddress::new(ip, 0);
@@ -15,11 +15,11 @@ fn pairing_and_file_operations() {
     let info = quaderno_core::device_information(&addr, std::time::Duration::from_secs(5)).unwrap();
     assert_eq!(info.serial_number.as_deref(), Some("MOCK0001"));
 
-    // Wrong PIN is rejected.
+    // 間違った PIN は拒否される。
     let bad = Registration::start(&addr).unwrap().finish("00000000");
     assert!(bad.is_err());
 
-    // Correct PIN registers the client.
+    // 正しい PIN でクライアントが登録される。
     let creds = Registration::start(&addr).unwrap().finish("87654321").expect("pairing");
     let dir = tempfile::tempdir().unwrap();
     let store = CredentialStore::new(dir.path().join("cfg"));
@@ -29,7 +29,7 @@ fn pairing_and_file_operations() {
     client.ping().unwrap();
     assert_eq!(client.battery().unwrap().level, Some(87));
 
-    // Create folders and upload.
+    // フォルダを作成してアップロードする。
     let a = client.create_folder(ROOT_FOLDER_ID, "A").unwrap();
     let b = client.create_folder(ROOT_FOLDER_ID, "B").unwrap();
     let local = dir.path().join("doc.pdf");
@@ -47,7 +47,7 @@ fn pairing_and_file_operations() {
     assert_eq!(docs["Document/A/doc.pdf"], b"%PDF-1.4 hello");
     assert_eq!(docs["Document/tree/sub/y.pdf"], b"y");
 
-    // Rename, copy, move.
+    // 名前の変更、コピー、移動。
     let doc = client.list_folder(&a).unwrap().into_iter().find(|e| e.entry_name == "doc.pdf").unwrap();
     assert_eq!(doc.file_size, Some(14));
     client.rename(&doc, "renamed.pdf").unwrap();
@@ -73,14 +73,14 @@ fn pairing_and_file_operations() {
         assert!(docs.contains_key(p), "missing {p}: {:?}", docs.keys());
     }
 
-    // Download a folder recursively.
+    // フォルダを再帰的にダウンロードする。
     let out = dir.path().join("out");
     std::fs::create_dir_all(&out).unwrap();
     let tree_entry = client.resolve_path("Document/B2/tree").unwrap();
     client.download_entry(&tree_entry, &out, &no_progress()).unwrap();
     assert_eq!(std::fs::read(out.join("tree/sub/y.pdf")).unwrap(), b"y");
 
-    // Delete (recursive).
+    // 削除 (再帰的)。
     let b2 = client.resolve_path("Document/B2").unwrap();
     client.delete(&b2).unwrap();
     assert_eq!(device.folders(), vec!["Document".to_string(), "Document/A".to_string()]);
@@ -88,12 +88,12 @@ fn pairing_and_file_operations() {
     client.delete(&renamed).unwrap();
     assert_eq!(client.list_folder(&a).unwrap().len(), 1);
 
-    // Stored credentials authenticate again.
+    // 保存した認証情報で再び認証できる。
     let creds = store.load().unwrap().unwrap();
     DeviceClient::connect(addr, creds).unwrap().ping().unwrap();
 }
 
-/// USB connections use IPv6 only; make sure the client handles IPv6 addresses.
+/// USB 接続は IPv6 だけを使うので、クライアントが IPv6 アドレスを扱えることを確かめる。
 #[test]
 fn ipv6_connection() {
     let ip: IpAddr = "::1".parse().unwrap();

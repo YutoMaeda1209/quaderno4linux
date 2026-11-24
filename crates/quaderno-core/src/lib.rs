@@ -1,10 +1,10 @@
-//! Protocol library for the Fujitsu Quaderno (and Sony DPT-RP1 family) e-paper devices.
+//! 富士通 Quaderno (と Sony DPT-RP1 系) の電子ペーパー端末のプロトコルライブラリ。
 //!
-//! * [`usb`] – switch a USB-attached device to USB Ethernet mode
-//! * [`discovery`] – find devices with mDNS over USB, Wi-Fi and Bluetooth
-//! * [`bluetooth`] – Bluetooth PAN (PANU) link to a paired device
-//! * [`register`] – pair this client with a device (PIN based)
-//! * [`client`] – authenticated file operations over HTTPS
+//! * [`usb`] – USB 接続の端末を USB Ethernet モードに切り替える
+//! * [`discovery`] – USB、Wi-Fi、Bluetooth 上で mDNS により端末を探す
+//! * [`bluetooth`] – ペアリング済みの端末との Bluetooth PAN (PANU) リンク
+//! * [`register`] – このクライアントを端末とペアリングする (PIN を使う)
+//! * [`client`] – HTTPS 上の認証済みファイル操作
 
 pub mod address;
 pub mod bluetooth;

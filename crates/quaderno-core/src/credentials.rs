@@ -1,4 +1,4 @@
-//! Client credentials (client id + RSA key) obtained by pairing.
+//! ペアリングで得たクライアントの認証情報 (クライアント ID と RSA 鍵)。
 
 use std::fs;
 use std::io::Write;
@@ -15,12 +15,12 @@ const CLIENT_ID_FILE: &str = "client_id";
 const PRIVATE_KEY_FILE: &str = "private_key.pem";
 const CERTIFICATE_FILE: &str = "device_certificate.pem";
 
-/// Credentials of this client.
+/// このクライアントの認証情報。
 #[derive(Clone)]
 pub struct Credentials {
     pub client_id: String,
     pub private_key: RsaPrivateKey,
-    /// Certificate issued by the device CA during pairing (informational).
+    /// ペアリング時に端末の CA が発行した証明書 (参考情報)。
     pub certificate: Option<String>,
 }
 
@@ -38,7 +38,7 @@ impl Credentials {
     }
 }
 
-/// On-disk credential store (`~/.config/quaderno4linux` by default).
+/// ディスク上の認証情報の保存先 (既定は `~/.config/quaderno4linux`)。
 #[derive(Clone, Debug)]
 pub struct CredentialStore {
     dir: PathBuf,
@@ -58,8 +58,8 @@ impl CredentialStore {
         &self.dir
     }
 
-    /// Loads stored credentials. Falls back to the files written by
-    /// `dpt-rp1-py` (`~/.config/dpt/deviceid.dat`, `privatekey.dat`).
+    /// 保存した認証情報を読み込む。なければ `dpt-rp1-py` が書き出したファイル (
+    /// `~/.config/dpt/deviceid.dat`、`privatekey.dat`) を使う。
     pub fn load(&self) -> Result<Option<Credentials>> {
         if let Some(c) = Self::load_pair(&self.dir.join(CLIENT_ID_FILE), &self.dir.join(PRIVATE_KEY_FILE))? {
             let certificate = fs::read_to_string(self.dir.join(CERTIFICATE_FILE)).ok();

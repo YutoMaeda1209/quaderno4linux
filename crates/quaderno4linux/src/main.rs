@@ -1,4 +1,4 @@
-//! Quaderno4Linux – a desktop manager for the Fujitsu Quaderno.
+//! Quaderno4Linux: 富士通 Quaderno のデスクトップ管理アプリ。
 
 mod app;
 mod dialogs;
@@ -17,7 +17,8 @@ use crate::app::QuadernoApp;
 fn main() {
     init_logging();
 
-    // `quaderno4linux --connect <address>` connects right away (handy with quaderno-mock).
+    // `quaderno4linux --connect <address>` で起動するとすぐに接続する (quaderno-mock と組み合わせる
+    // と便利)。
     let args: Vec<String> = std::env::args().collect();
     let initial_address = args.iter().position(|a| a == "--connect").and_then(|i| args.get(i + 1).cloned());
 
@@ -25,7 +26,7 @@ fn main() {
         gpui_kit::init(cx);
         Theme::update(cx, |theme| {
             theme.notification.placement = Anchor::BottomRight;
-            // Keep notifications above the status bar.
+            // 通知をステータスバーより上に表示する。
             theme.notification.margins.bottom = px(42.);
         });
         bind_keys(cx);
@@ -53,12 +54,12 @@ fn main() {
     });
 }
 
-/// `~/.local/state/quaderno4linux/quaderno4linux.log`, overwritten on every start.
+/// `~/.local/state/quaderno4linux/quaderno4linux.log`。起動のたびに上書きする。
 pub fn log_file_path() -> Option<PathBuf> {
     Some(dirs::state_dir()?.join("quaderno4linux").join("quaderno4linux.log"))
 }
 
-/// Logs to stderr and, when it can be created, to the log file.
+/// 標準エラー出力と、作成できればログファイルにログを出力する。
 fn init_logging() {
     let file = log_file_path().and_then(|path| {
         std::fs::create_dir_all(path.parent()?).ok()?;

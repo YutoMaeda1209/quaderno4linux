@@ -1,8 +1,8 @@
-//! Data types returned by the device API.
+//! 端末の API が返すデータ型。
 
 use serde::{Deserialize, Deserializer};
 
-/// The id of the root folder ("Document").
+/// ルートフォルダ ("Document") の ID。
 pub const ROOT_FOLDER_ID: &str = "root";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -14,7 +14,7 @@ pub enum EntryType {
     Unknown,
 }
 
-/// A document or folder on the device.
+/// 端末上の文書またはフォルダ。
 #[derive(Clone, Debug, Deserialize)]
 pub struct Entry {
     pub entry_id: String,
@@ -24,7 +24,7 @@ pub struct Entry {
     pub entry_path: String,
     #[serde(default)]
     pub parent_folder_id: Option<String>,
-    /// The device encodes numbers as strings.
+    /// 端末は数値を文字列で表す。
     #[serde(default, deserialize_with = "lenient_u64")]
     pub file_size: Option<u64>,
     #[serde(default)]
@@ -51,7 +51,7 @@ pub(crate) struct EntryList {
     pub entry_list: Vec<Entry>,
 }
 
-/// Information served unauthenticated on `:8080/register/information`.
+/// `:8080/register/information` で認証なしに取得できる情報。
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct DeviceInfo {
     #[serde(default)]
@@ -63,7 +63,7 @@ pub struct DeviceInfo {
 }
 
 impl DeviceInfo {
-    /// Human readable device name.
+    /// 人が読むための端末名。
     pub fn display_name(&self) -> String {
         let model = self
             .model_name
@@ -104,7 +104,7 @@ fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error>
     })
 }
 
-/// Formats a byte count for display (`1.2 MB`).
+/// バイト数を表示用に整形する (`1.2 MB`)。
 pub fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;
@@ -120,7 +120,7 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
-/// Formats an ISO-8601 device timestamp (`2024-01-02T03:04:05Z`) as `2024-01-02 03:04`.
+/// 端末の ISO-8601 タイムスタンプ (`2024-01-02T03:04:05Z`) を `2024-01-02 03:04` に整形する。
 pub fn format_date(date: &str) -> String {
     let d = date.replace('T', " ");
     d.get(..16).map(str::to_owned).unwrap_or(d)

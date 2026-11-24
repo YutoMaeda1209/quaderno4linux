@@ -1,4 +1,4 @@
-//! File explorer: browsing, transfer and file operations.
+//! ファイルエクスプローラー: 閲覧、転送、ファイル操作。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -44,7 +44,7 @@ impl QuadernoApp {
         client
     }
 
-    /// Reloads the current folder.
+    /// 現在のフォルダを読み込み直す。
     pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(client) = self.require_client(window, cx) else { return };
         let folder = self.current_folder();
@@ -69,7 +69,7 @@ impl QuadernoApp {
         );
     }
 
-    /// Navigates to the folder at breadcrumb depth `depth`, or into `child`.
+    /// パンくずリストの深さ `depth` のフォルダ、または `child` に移動する。
     fn navigate(&mut self, path: Vec<(String, String)>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(client) = self.require_client(window, cx) else { return };
         let folder = path.last().map(|p| p.0.clone()).unwrap_or_default();
@@ -114,7 +114,7 @@ impl QuadernoApp {
         }
     }
 
-    // ----- selection ----------------------------------------------------
+    // ----- 選択 ---------------------------------------------------------
 
     pub fn click_row(&mut self, ix: usize, ev: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_handle, cx);
@@ -163,7 +163,7 @@ impl QuadernoApp {
         cx.notify();
     }
 
-    // ----- operations ---------------------------------------------------
+    // ----- 操作 ---------------------------------------------------------
 
     pub fn new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.require_client(window, cx).is_none() {
@@ -308,7 +308,7 @@ impl QuadernoApp {
             return;
         };
         let dest = self.current_folder();
-        // A folder must not be copied or moved into itself or its descendants.
+        // フォルダを自分自身やその子孫にコピー・移動してはいけない。
         let ancestors: Vec<&str> = self.path.iter().map(|p| p.0.as_str()).collect();
         if let Some(bad) = clip.entries.iter().find(|e| e.is_folder() && ancestors.contains(&e.entry_id.as_str())) {
             let msg = format!("フォルダ「{}」をそれ自身の中に貼り付けることはできません", bad.entry_name);
@@ -361,7 +361,7 @@ impl QuadernoApp {
         );
     }
 
-    /// Asks for local files (or folders) and uploads them to the current folder.
+    /// ローカルのファイル (またはフォルダ) を選んでもらい、現在のフォルダにアップロードする。
     pub fn upload(&mut self, directories: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.require_client(window, cx).is_none() {
             return;
@@ -429,7 +429,7 @@ impl QuadernoApp {
         );
     }
 
-    /// Asks for a local directory and downloads the selection into it.
+    /// ローカルのディレクトリを選んでもらい、選択中の項目をそこにダウンロードする。
     pub fn download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.require_client(window, cx).is_none() {
             return;
@@ -495,7 +495,7 @@ impl QuadernoApp {
         );
     }
 
-    // ----- action handlers ---------------------------------------------
+    // ----- アクションハンドラ -------------------------------------------
 
     pub fn on_refresh(&mut self, _: &Refresh, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh(window, cx);
@@ -547,7 +547,7 @@ impl QuadernoApp {
         self.download(window, cx);
     }
 
-    // ----- rendering ----------------------------------------------------
+    // ----- 描画 ---------------------------------------------------------
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let enabled = self.client().is_some() && self.busy.is_none();
@@ -677,8 +677,8 @@ fn empty_state(icon: Option<IconName>, title: &'static str, description: &'stati
     Empty::new().size_full().header(header)
 }
 
-/// Rows of the file list. The entries and the selection stay in [`QuadernoApp`]; this
-/// only reads them, so the table supports the app's own multi-selection.
+/// ファイル一覧の行。項目と選択状態は [`QuadernoApp`] が持ち、ここでは読み取るだけにする。そうする
+/// ことで、表がアプリ独自の複数選択に対応できる。
 pub struct EntryTable {
     app: WeakEntity<QuadernoApp>,
 }
@@ -775,7 +775,7 @@ impl TableDelegate for EntryTable {
     }
 }
 
-/// Returns `name` or, if taken, `name (コピー)`, `name (コピー 2)`, ... (keeping the extension).
+/// `name` を返す。すでに使われていれば `name (コピー)`、`name (コピー 2)` … を返す (拡張子は保つ)。
 pub fn unique_name(name: &str, existing: &[String], is_folder: bool) -> String {
     if !existing.iter().any(|n| n == name) {
         return name.to_string();

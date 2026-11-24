@@ -1,4 +1,4 @@
-//! Small modal dialogs (text prompt, confirmation) and notifications.
+//! 小さなモーダルダイアログ (テキスト入力、確認) と通知。
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -16,9 +16,9 @@ use crate::app::QuadernoApp;
 type Submit = Rc<dyn Fn(&mut QuadernoApp, String, &mut Window, &mut Context<QuadernoApp>)>;
 
 impl QuadernoApp {
-    /// Shows a dialog with a single text field. `on_submit` runs with the trimmed
-    /// value when the user confirms (OK button or Enter – the dialog maps Enter to
-    /// its OK action) and the value is not empty.
+    /// テキスト入力欄が 1 つのダイアログを表示する。ユーザーが確定し (OK ボタンか Enter。ダイアログ
+    /// は Enter を OK の操作に割り当てる)、値が空でなければ、前後の空白を除いた値で `on_submit` を
+    /// 実行する。
     #[allow(clippy::too_many_arguments)]
     pub fn prompt_text(
         &mut self,
@@ -52,7 +52,8 @@ impl QuadernoApp {
         let title: SharedString = title.into();
         let description: SharedString = description.into();
         let ok_text: SharedString = ok_text.into();
-        // The builder can run again when the dialog layer is rebuilt; focus the input only once.
+        // ダイアログのレイヤーが作り直されるとビルダーが再び実行されるので、入力欄へのフォーカスは
+        // 1 回だけにする。
         let initial_focus = Cell::new(true);
         window.open_alert_dialog(cx, move |dialog, window, cx| {
             if initial_focus.replace(false) {
@@ -70,7 +71,7 @@ impl QuadernoApp {
         });
     }
 
-    /// Shows a confirmation dialog.
+    /// 確認ダイアログを表示する。
     #[allow(clippy::too_many_arguments)]
     pub fn confirm(
         &mut self,
@@ -105,8 +106,8 @@ impl QuadernoApp {
         });
     }
 
-    /// Shows an error notification. `detail` goes only to the log file, which the
-    /// notification offers to open.
+    /// エラー通知を表示する。`detail` はログファイルにだけ書き込み、通知からそのログファイルを開け
+    /// るようにする。
     pub fn notify_error(
         &mut self,
         summary: impl Into<SharedString>,
@@ -142,7 +143,7 @@ impl QuadernoApp {
     ) {
         let id = self.next_toast_id;
         self.next_toast_id += 1;
-        // Autohide is fixed at 5 seconds, so hide it ourselves after `TOAST_DURATION`.
+        // 自動で消える時間は 5 秒固定なので、`TOAST_DURATION` 経過後に自分で消す。
         let note = Notification::new().id1::<ToastKey>(id).with_type(kind).message(message).autohide(false);
         let note = if matches!(kind, NotificationType::Error) {
             note.action(|_, _, _| {
@@ -167,5 +168,5 @@ impl QuadernoApp {
 
 const TOAST_DURATION: Duration = Duration::from_secs(10);
 
-/// Id type that keys this app's notifications so each can be removed on its own.
+/// このアプリの通知を識別する ID の型。通知を 1 つずつ消せるようにするため。
 struct ToastKey;

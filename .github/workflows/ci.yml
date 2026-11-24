@@ -11,7 +11,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Fail on any warning, including Cargo's manifest lints that `-D warnings` does not cover.
+  # `-D warnings` が対象にしない Cargo のマニフェストの lint も含め、warning があれば失敗させる。
   CARGO_BUILD_WARNINGS: deny
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Image names on ghcr.io must be lowercase.
+      # ghcr.io のイメージ名は小文字でなければならない。
       - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/devcontainer" >> "$GITHUB_ENV"
       - uses: docker/login-action@v3
         with:
@@ -32,7 +32,7 @@ jobs:
         with:
           imageName: ${{ env.IMAGE }}
           cacheFrom: ${{ env.IMAGE }}
-          # Refresh the cached image only from main.
+          # キャッシュするイメージは main からのみ更新する。
           push: filter
           refFilterForPush: refs/heads/main
           eventFilterForPush: push

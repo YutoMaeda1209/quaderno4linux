@@ -1,4 +1,4 @@
-//! Main window: connection management and layout.
+//! メインウィンドウ: 接続の管理とレイアウト。
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -52,7 +52,7 @@ pub mod actions {
     );
 }
 
-/// State of the device connection.
+/// 端末との接続の状態。
 pub enum Connection {
     Disconnected,
     Connected { client: Arc<DeviceClient>, name: String, status: String },
@@ -76,14 +76,14 @@ pub struct QuadernoApp {
     pub credentials: Option<Credentials>,
     pub devices: Vec<DiscoveredDevice>,
     pub usb_state: usb::UsbState,
-    /// Paired Bluetooth devices offering the NAP service.
+    /// NAP サービスを提供するペアリング済みの Bluetooth 端末。
     pub bt_devices: Vec<BluetoothDevice>,
-    /// The Bluetooth device whose PAN link this app brought up.
+    /// このアプリが PAN リンクを確立した Bluetooth 端末。
     pub bt_link: Option<BluetoothDevice>,
     pub usb_mode: UsbNetMode,
     pub connection: Connection,
 
-    /// Breadcrumb: `(folder id, folder name)`, starting with the root.
+    /// パンくずリスト: ルートから始まる `(フォルダ ID, フォルダ名)`。
     pub path: Vec<(String, String)>,
     pub entries: Vec<Entry>,
     pub selection: HashSet<String>,
@@ -94,7 +94,7 @@ pub struct QuadernoApp {
 
     pub busy: Option<TaskProgress>,
     pub log: Vec<String>,
-    /// Id of the next notification, so each one can be hidden on its own.
+    /// 次の通知の ID。通知を 1 つずつ消せるようにするため。
     pub next_toast_id: u64,
 }
 
@@ -118,7 +118,7 @@ impl QuadernoApp {
                 .col_movable(false)
                 .sortable(false)
         });
-        // Keyboard handling (selection, shortcuts) lives on the app's own focus handle.
+        // キーボード操作 (選択、ショートカット) はアプリ自身のフォーカスハンドルで扱う。
         cx.on_focus(&table.focus_handle(cx), window, |this, window, cx| window.focus(&this.focus_handle, cx)).detach();
         let mut this = Self {
             focus_handle,
@@ -145,8 +145,8 @@ impl QuadernoApp {
             Some(c) => format!("クライアント ID: {}", c.client_id),
             None => "未ペアリングです。端末に接続するとペアリングを開始します".into(),
         });
-        // Dialogs and notifications need the window's `Root`, which exists only
-        // after this view has been constructed.
+        // ダイアログと通知にはウィンドウの `Root` が必要で、これはこのビューを作ったあとにしか存在
+        // しない。
         cx.defer_in(window, move |this, window, cx| match initial_address {
             Some(addr) => match DeviceAddress::parse(&addr) {
                 Ok(addr) => this.connect_to(addr, window, cx),
@@ -163,7 +163,7 @@ impl QuadernoApp {
         self.record_log(line);
     }
 
-    /// Adds a line to the in-app log (shown in the status bar) without writing it to the log file.
+    /// アプリ内のログ (ステータスバーに表示) に 1 行追加する。ログファイルには書き込まない。
     pub fn record_log(&mut self, line: String) {
         self.log.push(line);
         if self.log.len() > 200 {
@@ -182,16 +182,16 @@ impl QuadernoApp {
         self.path.last().map(|(id, _)| id.clone()).unwrap_or_else(|| ROOT_FOLDER_ID.into())
     }
 
-    // ----- discovery & connection --------------------------------------
+    // ----- 検索と接続 --------------------------------------------------
 
-    /// Searches for devices over USB and the network.
+    /// USB とネットワーク上の端末を探す。
     pub fn discover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run_task(
             "端末を検索しています",
             window,
             cx,
             |_| {
-                // Bluetooth is optional: without BlueZ the list is simply empty.
+                // Bluetooth は必須ではない。BlueZ がなければ一覧が空になるだけ。
                 let bt = bluetooth::paired_devices().unwrap_or_else(|e| {
                     log::info!("{e}");
                     Vec::new()
@@ -214,7 +214,7 @@ impl QuadernoApp {
         );
     }
 
-    /// Switches a USB-attached device to USB Ethernet mode, finds it and connects.
+    /// USB 接続の端末を USB Ethernet モードに切り替え、見つけて接続する。
     pub fn connect_usb(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mode = self.usb_mode;
         self.run_task(
@@ -232,7 +232,8 @@ impl QuadernoApp {
                     );
                 }
                 progress.set_detail("端末を探しています");
-                // The link-local address needs a moment (DAD) after the interface comes up.
+                // インターフェースが有効になってから、リンクローカルアドレスが使えるまで少し (DAD)
+                // かかる。
                 for _ in 0..6 {
                     let found: Vec<_> =
                         quaderno_core::discover(Duration::from_millis(1500)).into_iter().filter(|d| d.transport == Transport::Usb).collect();
@@ -268,11 +269,11 @@ impl QuadernoApp {
         );
     }
 
-    /// Offers to install the udev rule that lets the user open the serial port,
-    /// then retries the USB connection.
+    /// ユーザーがシリアルポートを開けるようにする udev ルールのインストールを提案し、USB 接続をやり
+    /// 直す。
     fn offer_udev_rule_install(&mut self, e: anyhow::Error, window: &mut Window, cx: &mut Context<Self>) {
         if usb::udev_rule_installed() {
-            // The rule only applies to users logged in on the local seat.
+            // ルールはローカルの席でログインしているユーザーにだけ適用される。
             self.notify_error(
                 "USB 接続に失敗しました。端末を挿し直してください",
                 format!("{e:#} (udev ルールはインストール済み。挿し直しても解決しない場合は dialout グループに参加してください)"),
@@ -373,8 +374,8 @@ impl QuadernoApp {
         cx.notify();
     }
 
-    /// Polls the device while `client` is the active connection and drops the
-    /// connection when the device goes away (cable pulled, Wi-Fi or Bluetooth off).
+    /// `client` が有効な接続である間は端末をポーリングし、端末がいなくなったら (ケーブルを抜いた、
+    /// Wi-Fi や Bluetooth を切ったなど) 接続を切る。
     fn watch_connection(&mut self, client: Arc<DeviceClient>, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let mut failures = 0;
@@ -388,7 +389,7 @@ impl QuadernoApp {
                 if !active {
                     return;
                 }
-                // A running task talks to the device itself and reports its own errors.
+                // 実行中のタスクは自分で端末と通信し、エラーも自分で報告する。
                 if busy {
                     continue;
                 }
@@ -410,7 +411,7 @@ impl QuadernoApp {
         .detach();
     }
 
-    /// Brings up the Bluetooth PAN link to a paired device, finds it and connects.
+    /// ペアリング済みの端末との Bluetooth PAN リンクを確立し、端末を見つけて接続する。
     pub fn connect_bluetooth(&mut self, dev: BluetoothDevice, window: &mut Window, cx: &mut Context<Self>) {
         self.run_task(
             format!("Bluetooth ({}) で接続しています", dev.name),
@@ -441,7 +442,7 @@ impl QuadernoApp {
         );
     }
 
-    /// Pairing step 1: the device shows a PIN, then we ask the user for it.
+    /// ペアリングの手順 1: 端末に PIN が表示されたら、ユーザーに PIN を尋ねる。
     pub fn start_pairing(&mut self, addr: DeviceAddress, window: &mut Window, cx: &mut Context<Self>) {
         self.run_task(
             "ペアリングを開始しています",
@@ -500,7 +501,7 @@ impl QuadernoApp {
         );
     }
 
-    // ----- rendering ----------------------------------------------------
+    // ----- 描画 ---------------------------------------------------------
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.busy.is_some();
@@ -730,19 +731,19 @@ fn short_id(id: &str) -> String {
     id.chars().take(8).collect::<String>() + "…"
 }
 
-/// `false` when the device cannot be reached any more.
+/// 端末に到達できなくなったら `false`。
 fn device_alive(client: &DeviceClient) -> bool {
     let addr = client.address();
-    // USB and Bluetooth use link-local addresses; their interface disappears
-    // as soon as the device is unplugged or the PAN link drops.
+    // USB と Bluetooth はリンクローカルアドレスを使う。端末を抜くか PAN リンクが切れると、すぐにイ
+    // ンターフェースが消える。
     if addr.scope_id != 0 && addr.interface_name().is_none() {
         return false;
     }
-    // Any answer from the device, even an error document, means it is still there.
+    // 端末から何らかの応答 (エラー文書でも) があれば、端末はまだ存在する。
     !matches!(client.ping(), Err(Error::Http(_) | Error::Io(_)))
 }
 
-/// Battery / storage summary for the sidebar.
+/// サイドバーに表示するバッテリーと容量の概要。
 pub fn device_status(client: &DeviceClient) -> String {
     let mut parts = Vec::new();
     if let Ok(b) = client.battery() {

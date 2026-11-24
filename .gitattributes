@@ -1,2 +1,2 @@
-# Auto detect text files and perform LF normalization
+# テキストファイルを自動判別し、改行を LF に正規化する
 * text eol=lf

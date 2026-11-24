@@ -1,9 +1,9 @@
 use thiserror::Error;
 
-/// Errors returned by the Quaderno protocol layer.
+/// Quaderno のプロトコル層が返すエラー。
 #[derive(Debug, Error)]
 pub enum Error {
-    /// The device answered with an error document (`{"error_code": "...", "message": "..."}`).
+    /// 端末がエラー文書 (`{"error_code": "...", "message": "..."}`) で応答した。
     #[error("デバイスエラー {code}: {message}{}", device_hint(code))]
     Device { status: u16, code: String, message: String },
 
@@ -42,7 +42,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// HTTP status of a device error, if any.
+    /// 端末エラーの HTTP ステータス (あれば)。
     pub fn status(&self) -> Option<u16> {
         match self {
             Error::Device { status, .. } => Some(*status),
@@ -52,7 +52,7 @@ impl Error {
     }
 }
 
-/// Explanation for documented device error codes (`<HTTP status><2 digits>`).
+/// 文書化されている端末のエラーコード (`<HTTP ステータス><2 桁>`) の説明。
 fn device_hint(code: &str) -> &'static str {
     match code {
         "40007" => " (同じ名前の項目が既に存在します)",
