@@ -13,9 +13,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::table::TableState;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme, Disableable, IconName, Sizable, TitleBar};
-use gpui_kit::{
-    div, prelude::*, px, ClickEvent, Context, Entity, FocusHandle, Focusable, SharedString, StyleRefinement, Window,
-};
+use gpui_kit::{div, prelude::*, px, ClickEvent, Context, Entity, FocusHandle, Focusable, StyleRefinement, Window};
 use quaderno_core::bluetooth::{self, BluetoothDevice};
 use quaderno_core::usb::UsbNetMode;
 use quaderno_core::{
@@ -62,6 +60,15 @@ pub enum Connection {
 pub enum ClipboardMode {
     Copy,
     Cut,
+}
+
+impl ClipboardMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            ClipboardMode::Copy => "コピー",
+            ClipboardMode::Cut => "切り取り",
+        }
+    }
 }
 
 pub struct Clipboard {
@@ -326,9 +333,9 @@ impl QuadernoApp {
             window,
             cx,
             move |_| {
-                let info = quaderno_core::device_information(&addr, Duration::from_secs(5)).ok();
+                let info = quaderno_core::device_information(&addr, Duration::from_secs(5)).unwrap_or_default();
                 let client = DeviceClient::connect(addr, credentials)?;
-                let name = info.map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
+                let name = info.display_name();
                 let status = device_status(&client);
                 let entries = client.list_root()?;
                 Ok((Arc::new(client), name, status, entries))
@@ -509,31 +516,13 @@ impl QuadernoApp {
         let bluetooth_section = self.render_bluetooth(busy || connected, cx);
         let theme = cx.theme();
 
-        let usb_summary: SharedString = if !self.usb_state.interfaces.is_empty() {
-            format!(
-                "USB Ethernet: {}",
-                self.usb_state
-                    .interfaces
-                    .iter()
-                    .map(|i| format!("{}{}", i.name, if i.up { "" } else { " (無効)" }))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .into()
-        } else if !self.usb_state.serial_ports.is_empty() {
-            format!("USB シリアル: {}", self.usb_state.serial_ports[0].display()).into()
-        } else {
-            "USB: 未検出".into()
-        };
-
         let devices = self.devices.iter().enumerate().map(|(i, d)| {
             let addr = d.address;
-            let label = d.info.as_ref().map(|i| i.display_name()).unwrap_or_else(|| "Quaderno".into());
             let via = d.transport.label();
             ListItem::new(("device", i))
                 .px_2()
                 .rounded(theme.radius)
-                .child(div().text_sm().child(label))
+                .child(div().text_sm().child(d.name()))
                 .child(div().text_xs().text_color(theme.muted_foreground).child(format!("{via} · {addr}")))
                 .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                     if is_double_click(ev) && this.busy.is_none() && this.client().is_none() {
@@ -573,10 +562,7 @@ impl QuadernoApp {
             )
             .child(
                 Button::new("usb-mode")
-                    .label(match self.usb_mode {
-                        UsbNetMode::Rndis => "RNDIS",
-                        UsbNetMode::CdcEcm => "CDC-ECM",
-                    })
+                    .label(self.usb_mode.label())
                     .tooltip("USB Ethernet の方式 (通常は RNDIS)")
                     .small()
                     .ghost()
@@ -635,7 +621,7 @@ impl QuadernoApp {
                 section("connection", "接続")
                     .child(connection_box)
                     .child(usb_buttons)
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(usb_summary)),
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(usb_summary(&self.usb_state))),
             )
             .child(section("bluetooth", "Bluetooth").child(bluetooth_section))
             .child(
@@ -704,8 +690,7 @@ impl QuadernoApp {
             let last = self.log.last().cloned().unwrap_or_default();
             bar = bar.child(div().flex_1().truncate().child(last));
             if let Some(clip) = &self.clipboard {
-                let verb = if clip.mode == ClipboardMode::Copy { "コピー" } else { "切り取り" };
-                bar = bar.right(format!("クリップボード: {} 件 ({verb})", clip.entries.len()));
+                bar = bar.right(format!("クリップボード: {} 件 ({})", clip.entries.len(), clip.mode.label()));
             }
         }
         if self.client().is_some() {
@@ -725,6 +710,19 @@ fn section(id: &'static str, title: &'static str) -> GroupBox {
 
 pub fn is_double_click(ev: &ClickEvent) -> bool {
     matches!(ev, ClickEvent::Mouse(m) if m.up.click_count >= 2)
+}
+
+/// サイドバーに表示する USB 接続の状態。
+fn usb_summary(state: &usb::UsbState) -> String {
+    if !state.interfaces.is_empty() {
+        let names: Vec<String> =
+            state.interfaces.iter().map(|i| format!("{}{}", i.name, if i.up { "" } else { " (無効)" })).collect();
+        format!("USB Ethernet: {}", names.join(", "))
+    } else if let Some(port) = state.serial_ports.first() {
+        format!("USB シリアル: {}", port.display())
+    } else {
+        "USB: 未検出".into()
+    }
 }
 
 fn short_id(id: &str) -> String {

@@ -17,7 +17,8 @@ use gpui_kit::{
 use quaderno_core::{format_date, format_size, DeviceClient, Entry};
 
 use crate::app::actions::*;
-use crate::app::{is_double_click, Clipboard, ClipboardMode, QuadernoApp};
+use crate::app::{device_status, is_double_click, Clipboard, ClipboardMode, Connection, QuadernoApp};
+use crate::tasks::TaskProgress;
 
 impl QuadernoApp {
     pub fn set_entries(&mut self, mut entries: Vec<Entry>) {
@@ -30,6 +31,11 @@ impl QuadernoApp {
         self.entries = entries;
         self.cursor = self.cursor.filter(|&c| c < self.entries.len());
         self.anchor = self.anchor.filter(|&c| c < self.entries.len());
+    }
+
+    /// 接続中で、ほかの処理を実行していなければ `true`。
+    fn can_operate(&self) -> bool {
+        self.client().is_some() && self.busy.is_none()
     }
 
     pub fn selected_entries(&self) -> Vec<Entry> {
@@ -54,13 +60,13 @@ impl QuadernoApp {
             cx,
             move |_| {
                 let entries = client.list_folder(&folder)?;
-                let status = crate::app::device_status(&client);
+                let status = device_status(&client);
                 Ok((entries, status))
             },
             |this, result, window, cx| match result {
                 Ok((entries, new_status)) => {
                     this.set_entries(entries);
-                    if let crate::app::Connection::Connected { status, .. } = &mut this.connection {
+                    if let Connection::Connected { status, .. } = &mut this.connection {
                         *status = new_status;
                     }
                 }
@@ -69,7 +75,7 @@ impl QuadernoApp {
         );
     }
 
-    /// パンくずリストの深さ `depth` のフォルダ、または `child` に移動する。
+    /// `path` (ルートから始まるフォルダの列) の最後のフォルダに移動する。
     fn navigate(&mut self, path: Vec<(String, String)>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(client) = self.require_client(window, cx) else { return };
         let folder = path.last().map(|p| p.0.clone()).unwrap_or_default();
@@ -165,6 +171,41 @@ impl QuadernoApp {
 
     // ----- 操作 ---------------------------------------------------------
 
+    /// 現在のフォルダの中身を変える処理 `work` をバックグラウンドで実行し、フォルダを読み込み直して
+    /// から `done` を呼ぶ。失敗したときは途中まで反映されている可能性があるので、エラーを通知してフォ
+    /// ルダを読み込み直す。
+    fn modify_folder<R: Send + 'static>(
+        &mut self,
+        label: &'static str,
+        error_summary: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(&DeviceClient, &str, &TaskProgress) -> anyhow::Result<R> + Send + 'static,
+        done: impl FnOnce(&mut Self, R, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let Some(client) = self.require_client(window, cx) else { return };
+        let folder = self.current_folder();
+        self.run_task(
+            label,
+            window,
+            cx,
+            move |progress| {
+                let output = work(&client, &folder, &progress)?;
+                Ok((output, client.list_folder(&folder)?))
+            },
+            move |this, result, window, cx| match result {
+                Ok((output, entries)) => {
+                    this.set_entries(entries);
+                    done(this, output, window, cx);
+                }
+                Err(e) => {
+                    this.notify_error(error_summary, &e, window, cx);
+                    this.refresh(window, cx);
+                }
+            },
+        );
+    }
+
     pub fn new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.require_client(window, cx).is_none() {
             return;
@@ -177,25 +218,20 @@ impl QuadernoApp {
             window,
             cx,
             |this, name, window, cx| {
-                let Some(client) = this.client() else { return };
-                let parent = this.current_folder();
-                this.run_task(
+                this.modify_folder(
                     "フォルダを作成しています",
+                    "フォルダを作成できません",
                     window,
                     cx,
-                    move |_| {
-                        client.create_folder(&parent, &name)?;
-                        Ok((name, client.list_folder(&parent)?))
+                    move |client, parent, _| {
+                        client.create_folder(parent, &name)?;
+                        Ok(name)
                     },
-                    |this, result, window, cx| match result {
-                        Ok((name, entries)) => {
-                            this.set_entries(entries);
-                            if let Some(e) = this.entries.iter().find(|e| e.entry_name == name) {
-                                this.selection = [e.entry_id.clone()].into();
-                            }
-                            this.notify_success(format!("フォルダ「{name}」を作成しました"), window, cx);
+                    |this, name, window, cx| {
+                        if let Some(e) = this.entries.iter().find(|e| e.entry_name == name) {
+                            this.selection = [e.entry_id.clone()].into();
                         }
-                        Err(e) => this.notify_error("フォルダを作成できません", &e, window, cx),
+                        this.notify_success(format!("フォルダ「{name}」を作成しました"), window, cx);
                     },
                 );
             },
@@ -221,23 +257,18 @@ impl QuadernoApp {
                 if name == current {
                     return;
                 }
-                let Some(client) = this.client() else { return };
                 let entry = entry.clone();
-                let parent = this.current_folder();
-                this.run_task(
+                this.modify_folder(
                     "名前を変更しています",
+                    "名前を変更できません",
                     window,
                     cx,
-                    move |_| {
+                    move |client, _, _| {
                         client.rename(&entry, &name)?;
-                        Ok((name, client.list_folder(&parent)?))
+                        Ok(name)
                     },
-                    |this, result, window, cx| match result {
-                        Ok((name, entries)) => {
-                            this.set_entries(entries);
-                            this.notify_success(format!("「{name}」に名前を変更しました"), window, cx);
-                        }
-                        Err(e) => this.notify_error("名前を変更できません", &e, window, cx),
+                    |this, name, window, cx| {
+                        this.notify_success(format!("「{name}」に名前を変更しました"), window, cx);
                     },
                 );
             },
@@ -246,45 +277,32 @@ impl QuadernoApp {
 
     pub fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.selected_entries();
-        if selected.is_empty() {
-            self.notify_warning("削除する項目を選択してください", window, cx);
-            return;
-        }
-        let message = if selected.len() == 1 {
-            let e = &selected[0];
-            if e.is_folder() {
-                format!("フォルダ「{}」とその中身をすべて削除します。元に戻せません。", e.entry_name)
-            } else {
-                format!("「{}」を削除します。元に戻せません。", e.entry_name)
+        let message = match selected.as_slice() {
+            [] => {
+                self.notify_warning("削除する項目を選択してください", window, cx);
+                return;
             }
-        } else {
-            format!("{} 件の項目を削除します。フォルダは中身ごと削除されます。元に戻せません。", selected.len())
+            [e] if e.is_folder() => {
+                format!("フォルダ「{}」とその中身をすべて削除します。元に戻せません。", e.entry_name)
+            }
+            [e] => format!("「{}」を削除します。元に戻せません。", e.entry_name),
+            _ => format!("{} 件の項目を削除します。フォルダは中身ごと削除されます。元に戻せません。", selected.len()),
         };
         self.confirm("削除の確認", message, "削除", true, window, cx, move |this, window, cx| {
-            let Some(client) = this.client() else { return };
             let entries = selected.clone();
-            let parent = this.current_folder();
-            this.run_task(
+            this.modify_folder(
                 "削除しています",
+                "削除できません",
                 window,
                 cx,
-                move |progress| {
+                move |client, _, progress| {
                     for e in &entries {
                         progress.set_detail(e.entry_name.clone());
                         client.delete(e)?;
                     }
-                    Ok((entries.len(), client.list_folder(&parent)?))
+                    Ok(entries.len())
                 },
-                |this, result, window, cx| match result {
-                    Ok((n, entries)) => {
-                        this.set_entries(entries);
-                        this.notify_success(format!("{n} 件を削除しました"), window, cx);
-                    }
-                    Err(e) => {
-                        this.notify_error("削除できません", &e, window, cx);
-                        this.refresh(window, cx);
-                    }
-                },
+                |this, n, window, cx| this.notify_success(format!("{n} 件を削除しました"), window, cx),
             );
         });
     }
@@ -295,19 +313,23 @@ impl QuadernoApp {
             self.notify_warning("項目を選択してください", window, cx);
             return;
         }
-        let verb = if mode == ClipboardMode::Copy { "コピー" } else { "切り取り" };
-        self.push_log(format!("{} 件を{verb}しました。移動先のフォルダで「貼り付け」を押してください", entries.len()));
+        self.push_log(format!(
+            "{} 件を{}しました。移動先のフォルダで「貼り付け」を押してください",
+            entries.len(),
+            mode.label()
+        ));
         self.clipboard = Some(Clipboard { mode, entries, source_folder: self.current_folder() });
         cx.notify();
     }
 
     pub fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(client) = self.require_client(window, cx) else { return };
+        if self.require_client(window, cx).is_none() {
+            return;
+        }
         let Some(clip) = self.clipboard.as_ref() else {
             self.notify_warning("クリップボードが空です", window, cx);
             return;
         };
-        let dest = self.current_folder();
         // フォルダを自分自身やその子孫にコピー・移動してはいけない。
         let ancestors: Vec<&str> = self.path.iter().map(|p| p.0.as_str()).collect();
         if let Some(bad) = clip.entries.iter().find(|e| e.is_folder() && ancestors.contains(&e.entry_id.as_str())) {
@@ -316,47 +338,41 @@ impl QuadernoApp {
             return;
         }
         let mode = clip.mode;
-        let same_folder = clip.source_folder == dest;
-        if mode == ClipboardMode::Cut && same_folder {
+        if mode == ClipboardMode::Cut && clip.source_folder == self.current_folder() {
             self.clipboard = None;
             cx.notify();
             return;
         }
         let entries = clip.entries.clone();
-        let existing: Vec<String> = self.entries.iter().map(|e| e.entry_name.clone()).collect();
-        let label = if mode == ClipboardMode::Copy { "コピーしています" } else { "移動しています" };
-        self.run_task(
+        let mut names: Vec<String> = self.entries.iter().map(|e| e.entry_name.clone()).collect();
+        let (label, verb) = match mode {
+            ClipboardMode::Copy => ("コピーしています", "コピー"),
+            ClipboardMode::Cut => ("移動しています", "移動"),
+        };
+        self.modify_folder(
             label,
+            "貼り付けに失敗しました",
             window,
             cx,
-            move |progress| {
-                let mut names = existing;
+            move |client, dest, progress| {
                 for e in &entries {
                     progress.set_detail(e.entry_name.clone());
                     match mode {
                         ClipboardMode::Copy => {
                             let name = unique_name(&e.entry_name, &names, e.is_folder());
-                            client.copy_to(e, &dest, Some(&name))?;
+                            client.copy_to(e, dest, Some(&name))?;
                             names.push(name);
                         }
-                        ClipboardMode::Cut => client.move_to(e, &dest)?,
+                        ClipboardMode::Cut => client.move_to(e, dest)?,
                     }
                 }
-                Ok((entries.len(), client.list_folder(&dest)?))
+                Ok(entries.len())
             },
-            move |this, result, window, cx| match result {
-                Ok((n, entries)) => {
-                    if mode == ClipboardMode::Cut {
-                        this.clipboard = None;
-                    }
-                    this.set_entries(entries);
-                    let verb = if mode == ClipboardMode::Copy { "コピー" } else { "移動" };
-                    this.notify_success(format!("{n} 件を{verb}しました"), window, cx);
+            move |this, n, window, cx| {
+                if mode == ClipboardMode::Cut {
+                    this.clipboard = None;
                 }
-                Err(e) => {
-                    this.notify_error("貼り付けに失敗しました", &e, window, cx);
-                    this.refresh(window, cx);
-                }
+                this.notify_success(format!("{n} 件を{verb}しました"), window, cx);
             },
         );
     }
@@ -366,26 +382,17 @@ impl QuadernoApp {
         if self.require_client(window, cx).is_none() {
             return;
         }
-        let rx = cx.prompt_for_paths(PathPromptOptions {
+        let options = PathPromptOptions {
             files: !directories,
             directories,
             multiple: true,
             prompt: Some(if directories { "フォルダをアップロード" } else { "アップロード" }.into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let result = rx.await;
-            let _ = this.update_in(cx, |this, window, cx| match result {
-                Ok(Ok(Some(paths))) => this.upload_paths(paths, window, cx),
-                Ok(Err(e)) => this.notify_file_dialog_error(e, window, cx),
-                _ => {}
-            });
-        })
-        .detach();
+        };
+        self.prompt_for_paths(options, window, cx, |this, paths, window, cx| this.upload_paths(paths, window, cx));
     }
 
     pub fn upload_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(client) = self.require_client(window, cx) else { return };
-        if paths.is_empty() {
+        if self.require_client(window, cx).is_none() || paths.is_empty() {
             return;
         }
         let non_pdf = paths
@@ -399,33 +406,24 @@ impl QuadernoApp {
                 cx,
             );
         }
-        let dest = self.current_folder();
-        self.run_task(
+        self.modify_folder(
             "アップロードしています",
+            "アップロードに失敗しました",
             window,
             cx,
-            move |progress| {
+            move |client, dest, progress| {
                 let cb = progress.callback();
                 for p in &paths {
                     progress.set_detail(p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
                     if p.is_dir() {
-                        client.upload_dir(p, &dest, &cb)?;
+                        client.upload_dir(p, dest, &cb)?;
                     } else {
-                        client.upload_file(p, &dest, &cb)?;
+                        client.upload_file(p, dest, &cb)?;
                     }
                 }
-                Ok((paths.len(), client.list_folder(&dest)?))
+                Ok(paths.len())
             },
-            |this, result, window, cx| match result {
-                Ok((n, entries)) => {
-                    this.set_entries(entries);
-                    this.notify_success(format!("{n} 件をアップロードしました"), window, cx);
-                }
-                Err(e) => {
-                    this.notify_error("アップロードに失敗しました", &e, window, cx);
-                    this.refresh(window, cx);
-                }
-            },
+            |this, n, window, cx| this.notify_success(format!("{n} 件をアップロードしました"), window, cx),
         );
     }
 
@@ -439,37 +437,43 @@ impl QuadernoApp {
             self.notify_warning("ダウンロードする項目を選択してください", window, cx);
             return;
         }
-        let rx = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("ここに保存".into()),
+        let options =
+            PathPromptOptions {
+                files: false, directories: true, multiple: false, prompt: Some("ここに保存".into())
+            };
+        self.prompt_for_paths(options, window, cx, |this, mut dirs, window, cx| {
+            if let Some(dir) = dirs.pop() {
+                this.download_to(entries, dir, window, cx);
+            }
         });
+    }
+
+    /// ファイル選択ダイアログを開き、ユーザーがパスを選んだら `on_paths` を呼ぶ。
+    fn prompt_for_paths(
+        &mut self,
+        options: PathPromptOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        on_paths: impl FnOnce(&mut Self, Vec<PathBuf>, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let rx = cx.prompt_for_paths(options);
         cx.spawn_in(window, async move |this, cx| {
             let result = rx.await;
             let _ = this.update_in(cx, |this, window, cx| match result {
-                Ok(Ok(Some(mut dirs))) => {
-                    if let Some(dir) = dirs.pop() {
-                        this.download_to(entries, dir, window, cx);
-                    }
-                }
-                Ok(Err(e)) => this.notify_file_dialog_error(e, window, cx),
+                Ok(Ok(Some(paths))) => on_paths(this, paths, window, cx),
+                Ok(Err(e)) => this.notify_error(
+                    "ファイル選択ダイアログを開けません",
+                    format!(
+                        "{e:#} (xdg-desktop-portal の GNOME/KDE/GTK 実装が必要です。\
+                         ファイルをウィンドウにドラッグ＆ドロップしてアップロードすることもできます)"
+                    ),
+                    window,
+                    cx,
+                ),
                 _ => {}
             });
         })
         .detach();
-    }
-
-    fn notify_file_dialog_error(&mut self, e: anyhow::Error, window: &mut Window, cx: &mut Context<Self>) {
-        self.notify_error(
-            "ファイル選択ダイアログを開けません",
-            format!(
-                "{e:#} (xdg-desktop-portal の GNOME/KDE/GTK 実装が必要です。\
-                 ファイルをウィンドウにドラッグ＆ドロップしてアップロードすることもできます)"
-            ),
-            window,
-            cx,
-        );
     }
 
     fn download_to(&mut self, entries: Vec<Entry>, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
@@ -550,7 +554,7 @@ impl QuadernoApp {
     // ----- 描画 ---------------------------------------------------------
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let enabled = self.client().is_some() && self.busy.is_none();
+        let enabled = self.can_operate();
         let has_sel = !self.selection.is_empty();
         let one_sel = self.selection.len() == 1;
         let can_paste = self.clipboard.is_some();
@@ -624,7 +628,7 @@ impl QuadernoApp {
     }
 
     fn render_breadcrumb(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let enabled = self.client().is_some() && self.busy.is_none();
+        let enabled = self.can_operate();
         let items = self.path.iter().enumerate().map(|(depth, (_, name))| {
             let last = depth + 1 == self.path.len();
             BreadcrumbItem::new(SharedString::from(name.clone())).disabled(!enabled || last).on_click(cx.listener(
