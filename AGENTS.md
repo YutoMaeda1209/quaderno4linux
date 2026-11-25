@@ -5,8 +5,7 @@ Rust と GPUI Kit で実装しています。機能や使い方は [README.md](R
 
 ## 構成
 
-- `crates/quaderno-core`: プロトコル実装 (USB モード切替、Bluetooth PAN、\
-  mDNS 検索、ペアリング、認証、文書 API)。GUI に依存しない
+- `crates/quaderno-core`: プロトコル実装 (USB モード切替、Bluetooth PAN、mDNS 検索、ペアリング、認証、文書 API)。GUI に依存しない
 - `crates/quaderno4linux`: GPUI Kit のデスクトップアプリ
   - `app.rs`: 接続とレイアウト
   - `explorer.rs`: ファイル一覧と操作
@@ -54,8 +53,7 @@ cargo test --workspace
 ## 実装の決まり
 
 - UI は GPUI Kit の部品で組み、同等の部品があるものを自作しないでください。\
-  import は `gpui_kit::` と `gpui_kit::component::` を使います\
-  (`gpui` / `gpui_component` は直接使わない)。
+  import は `gpui_kit::` と `gpui_kit::component::` を使います (`gpui` / `gpui_component` は直接使わない)。
 - 通信など時間のかかる処理は `run_task` (`tasks.rs`) でバックグラウンドスレッドに出し、UI スレッドをブロックしないでください。\
   同時に実行できる処理は 1 つです。
 - ユーザーへの通知は `notify_error` / `notify_warning` / `notify_success` を使います。\
@@ -70,5 +68,4 @@ cargo test --workspace
 
 ## コミットと PR
 
-ブランチの作成、コミット、PR の作成の前に、必ず\
-[CONTRIBUTING.md](.github/CONTRIBUTING.md) を読んで従ってください。
+ブランチの作成、コミット、PR の作成の前に、必ず [CONTRIBUTING.md](.github/CONTRIBUTING.md) を読んで従ってください。

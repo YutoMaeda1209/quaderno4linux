@@ -1,11 +1,9 @@
 # Quaderno4Linux
 
-富士通 電子ペーパー **QUADERNO** (FMVDP51 など、Sony DPT-RP1 系) を Linux から管理するデスクトップアプリです。
-Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit)\
-(GPUI + GPUI Component) で実装しています。
+富士通 電子ペーパー **QUADERNO** (FMVDP51 など、Sony DPT-RP1 系) を Linux から管理するデスクトップアプリです。\
+Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + GPUI Component) で実装しています。
 
-機能、動作環境、インストール方法、使い方、トラブルシューティング、プロトコルの概要は\
-[Wiki](https://github.com/YutoMaeda1209/quaderno4linux/wiki) を参照してください。
+機能、動作環境、インストール方法、使い方、トラブルシューティング、プロトコルの概要は [Wiki](https://github.com/YutoMaeda1209/quaderno4linux/wiki) を参照してください。
 
 ## ビルド
 
@@ -30,17 +28,14 @@ cargo build --release
 ./target/release/quaderno4linux
 ```
 
-USB 接続に必要な udev ルールとデスクトップエントリの設定は\
-[Wiki のインストール](https://github.com/YutoMaeda1209/quaderno4linux/wiki/インストール) を参照してください。
+USB 接続に必要な udev ルールとデスクトップエントリの設定は [Wiki のインストール](https://github.com/YutoMaeda1209/quaderno4linux/wiki/インストール) を参照してください。
 
 ## 開発
 
 ### DevContainer
 
-VS Code の Dev Containers 拡張で開くと、GPUI のビルドに必要なライブラリを\
-`mcr.microsoft.com/devcontainers/rust:2.1.7-1-trixie` に加えた環境が起動します。\
-コンテナ内ではビルドとテスト ([モック端末](https://github.com/YutoMaeda1209/quaderno4linux/wiki/モック端末) を使った E2E テストを含む) を行い、\
-GUI の動作確認や実機との接続はホストで行ってください。
+VS Code の Dev Containers 拡張で開くと、GPUI のビルドに必要なライブラリを `mcr.microsoft.com/devcontainers/rust:2.1.7-1-trixie` に加えた環境が起動します。\
+コンテナ内ではビルドとテスト ([モック端末](https://github.com/YutoMaeda1209/quaderno4linux/wiki/モック端末) を使った E2E テストを含む) を行い、GUI の動作確認や実機との接続はホストで行ってください。
 
 ### テスト
 
