@@ -35,6 +35,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # テストは CI で実行済み。ここで debug ビルドもすると、release ビルドの途中でランナーのディスクが尽きる。
       - uses: devcontainers/ci@v0.3
         with:
           imageName: ${{ env.IMAGE }}
@@ -45,7 +46,6 @@ jobs:
             CARGO_BUILD_WARNINGS
           runCmd: |
             set -e
-            cargo test --workspace
             cargo build --release -p quaderno4linux
             cargo about generate -m crates/quaderno4linux/Cargo.toml \
               -c packaging/licenses/about.toml packaging/licenses/about.hbs \
