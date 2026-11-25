@@ -8,4 +8,26 @@ services:
         source: "../"
         target: "/workspace"
         consistency: cached
+      # GUI アプリをホストの画面に表示するためのソケット (X11、Wayland、D-Bus)。
+      # 変数が未設定の環境 (CI など) では、空のディレクトリがマウントされるだけになる。
+      - type: bind
+        source: /tmp/.X11-unix
+        target: /tmp/.X11-unix
+      - type: bind
+        source: ${XDG_RUNTIME_DIR:-/tmp/devcontainer-runtime}
+        target: ${XDG_RUNTIME_DIR:-/tmp/devcontainer-runtime}
+      # GPU (Vulkan で描画するのに必要)。`devices` は GPU のない環境で起動に失敗するため、
+      # マウントとデバイスのアクセス許可で渡す。
+      - type: bind
+        source: /dev/dri
+        target: /dev/dri
+    device_cgroup_rules:
+      - "c 226:* rmw"
+    environment:
+      - DISPLAY=$DISPLAY
+      - WAYLAND_DISPLAY=$WAYLAND_DISPLAY
+      - XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
+      - PULSE_SERVER=$PULSE_SERVER
+      - XAUTHORITY=$XAUTHORITY
+      - DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS
     command: sleep infinity

@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_WARNINGS: deny
+  # Compose が buildx bake でビルドすると、devcontainer CLI が /tmp に生成する Dockerfile の
+  # 読み取りに追加の許可を求めて失敗する。
+  COMPOSE_BAKE: "false"
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check that the tag matches the crate version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the version in Cargo.toml (v$version)"
+            exit 1
+          fi
+      # ghcr.io のイメージ名は小文字でなければならない。
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/devcontainer" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: devcontainers/ci@v0.3
+        with:
+          imageName: ${{ env.IMAGE }}
+          cacheFrom: ${{ env.IMAGE }}
+          push: never
+          env: |
+            CARGO_TERM_COLOR
+            CARGO_BUILD_WARNINGS
+          runCmd: |
+            set -e
+            cargo test --workspace
+            cargo build --release -p quaderno4linux
+            cargo about generate -m crates/quaderno4linux/Cargo.toml \
+              -c packaging/licenses/about.toml packaging/licenses/about.hbs \
+              -o target/release/THIRD_PARTY_LICENSES.html
+            cargo deb -p quaderno4linux --no-build
+            cargo generate-rpm -p crates/quaderno4linux
+      - name: Write checksums
+        run: sha256sum target/debian/*.deb target/generate-rpm/*.rpm | sed 's|  .*/|  |' > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
+            SHA256SUMS
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

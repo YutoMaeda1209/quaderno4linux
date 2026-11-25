@@ -1,23 +1,18 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/typescript-node
+// 書式の詳細は https://aka.ms/devcontainer.json を参照。
 {
   "name": "Quaderno4Linux",
   "dockerComposeFile": "docker-compose.yml",
   "service": "devcontainer",
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
-  "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "upgradePackages": true
-    },
-    "ghcr.io/devcontainers/features/github-cli:1": {}
-  },
   "customizations": {
     "vscode": {
       "settings": {
         "editor.formatOnSave": true
       },
-      "extensions": ["EditorConfig.EditorConfig"]
+      "extensions": [
+        "EditorConfig.EditorConfig"
+      ]
     }
   }
 }

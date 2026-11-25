@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # `-D warnings` が対象にしない Cargo のマニフェストの lint も含め、warning があれば失敗させる。
+  CARGO_BUILD_WARNINGS: deny
+  # Compose が buildx bake でビルドすると、devcontainer CLI が /tmp に生成する Dockerfile の
+  # 読み取りに追加の許可を求めて失敗する。
+  COMPOSE_BAKE: "false"
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # ghcr.io のイメージ名は小文字でなければならない。
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/devcontainer" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: devcontainers/ci@v0.3
+        with:
+          imageName: ${{ env.IMAGE }}
+          cacheFrom: ${{ env.IMAGE }}
+          # キャッシュするイメージは main からのみ更新する。
+          push: filter
+          refFilterForPush: refs/heads/main
+          eventFilterForPush: push
+          env: |
+            CARGO_TERM_COLOR
+            CARGO_BUILD_WARNINGS
+          runCmd: |
+            set -e
+            cargo fmt --all --check
+            cargo clippy --workspace --all-targets -- -D warnings
+            cargo test --workspace

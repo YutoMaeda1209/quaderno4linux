@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+# 接続済みの Quaderno にも udev ルールを適用する。
+if [ "$1" = "configure" ] && command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload || true
+    udevadm trigger --subsystem-match=tty --action=change || true
+fi
+#DEBHELPER#

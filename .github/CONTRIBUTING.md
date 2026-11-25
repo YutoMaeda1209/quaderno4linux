@@ -4,16 +4,25 @@
 
 ## Issue ドリブン開発について
 
-本プロジェクトは「Issue ドリブン」開発手法を採用しています。Issue ドリブンとは、バグ修正・新機能追加・ドキュメント改善など、すべての作業を GitHub Issue として管理し、Issue 単位で作業を進める方法です。これにより、各タスクの目的・背景・進捗が明確になり、チーム内での情報共有やレビューが円滑に行えます。
+本プロジェクトは「Issue ドリブン」開発手法を採用しています。\
+Issue ドリブンとは、バグ修正・新機能追加・ドキュメント改善など、すべての作業を GitHub Issue として管理し、\
+Issue 単位で作業を進める方法です。\
+これにより、各タスクの目的・背景・進捗が明確になり、チーム内での情報共有やレビューが円滑に行えます。
 
 - 作業を始める前に、必ず Issue を作成または確認してください。
 - ブランチは必ず Issue と紐付けてください。(例: `feat/123-newFeature`)
-- プルリクエストを作成する際は、必ず Issue とリンクさせてください。プルリクエストと Issue の紐付け方法については[公式ドキュメント](https://docs.github.com/ja/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)を参照してください。
+- プルリクエストを作成する際は、必ず Issue とリンクさせてください。\
+  プルリクエストと Issue の紐付け方法については[公式ドキュメント](https://docs.github.com/ja/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)を参照してください。
+
+## コードについて
+
+- プログラムのコメントは日本語で記述してください。
 
 ## コミットについて
 
 - 1 コミットにつき 1 つの機能追加またはバグ修正だけを含めてください。
 - 文法エラーが無い状態でコミットしてください。
+- コミットメッセージは英語で記述してください。
 - コミットメッセージの 1 行目は`{verb} {summary}`の形式で記述してください。
   - `Add user profile page`
   - `Fix login bug`
@@ -33,13 +42,13 @@
 
 - `main`ブランチ：本番用の安定したブランチです。
 - 開発時は、目的に応じて`main`から新しいブランチを作成してください。
-  - Feature: `feat`<br>
+  - Feature: `feat`\
     新機能実装用のブランチです。
-  - Bugfix: `fix`<br>
+  - Bugfix: `fix`\
     バグ修正用のブランチです。
-  - Cherry-pick: `cherrypick`<br>
+  - Cherry-pick: `cherrypick`\
     特定コミットのみを他ブランチへ適用するためのブランチです。
-  - Sandbox: `sandbox`<br>
+  - Sandbox: `sandbox`\
     新機能の試験やプロトタイピング用のブランチです。
 
 ### ブランチのマージルール

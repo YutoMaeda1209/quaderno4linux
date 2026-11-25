@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Quaderno4Linux
+Comment=Manage documents on a Fujitsu Quaderno
+Comment[ja]=QUADERNO の文書を管理します
+Exec=quaderno4linux
+Icon=x-office-document
+Terminal=false
+Categories=Utility;Office;
+StartupWMClass=io.github.yutomaeda1209.quaderno4linux
