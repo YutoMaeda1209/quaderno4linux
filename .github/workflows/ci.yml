@@ -19,7 +19,7 @@ env:
 
 jobs:
   check:
-    name: fmt, clippy, test
+    name: ci
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
