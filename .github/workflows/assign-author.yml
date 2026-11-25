@@ -1,0 +1,23 @@
+name: Assign author
+
+on:
+  # フォークからの PR でも書き込み権限のあるトークンを使えるようにする。
+  # PR のコードはチェックアウトも実行もしない。
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  assign:
+    name: assign-author
+    runs-on: ubuntu-24.04
+    # Bot (Dependabot など) は Assignees に追加できない。
+    if: github.event.pull_request.user.type != 'Bot'
+    steps:
+      - run: gh api "repos/$GITHUB_REPOSITORY/issues/$PR/assignees" -f "assignees[]=$AUTHOR"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
