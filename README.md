@@ -4,51 +4,8 @@
 Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit)\
 (GPUI + GPUI Component) で実装しています。
 
-## 機能
-
-- **接続**
-  - USB: 端末を USB シリアルモードから USB Ethernet モード (RNDIS / CDC-ECM) に切り替え、IPv6 リンクローカルで自動接続
-  - Wi-Fi / LAN: mDNS (`_dp_fujitsu._tcp`) で端末を自動検索 (IPv4 を優先)
-  - Bluetooth: ペアリング済みの端末に Bluetooth PAN (PANU) で接続。\
-    NetworkManager の接続プロファイル (固定 IPv4) を自動で作成
-  - ペアリング: 端末に表示される 8 桁の PIN で登録。\
-    認証情報は `~/.config/quaderno4linux/` に保存\
-    ([dpt-rp1-py](https://github.com/janten/dpt-rp1-py) の `~/.config/dpt/` があればそれも利用)
-- **ファイルエクスプローラー**
-  - アップロード (ファイル・フォルダ、ウィンドウへのドラッグ＆ドロップにも対応) / ダウンロード (フォルダは再帰的に)
-  - フォルダの作成
-  - 削除・コピー・移動 (切り取り → 貼り付け)・名前の変更
-  - バッテリー残量・空き容量・ファームウェアバージョンの表示
-
-| 操作 | ショートカット |
-| --- | --- |
-| 更新 | `F5` / `Ctrl+R` |
-| 親フォルダへ | `Backspace` / `Alt+↑` |
-| 開く (フォルダは移動、文書は既定の PDF ビューアーで表示) | `Enter` / ダブルクリック |
-| すべて選択 / 複数選択 | `Ctrl+A` / `Ctrl+クリック`, `Shift+クリック` |
-| コピー / 切り取り / 貼り付け | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` |
-| 名前の変更 | `F2` |
-| 削除 | `Delete` |
-| 新しいフォルダ | `Ctrl+Shift+N` |
-| アップロード / ダウンロード | `Ctrl+U` / `Ctrl+D` |
-
-## 動作環境
-
-Ubuntu 24.04 以降 / Fedora 40 以降 (X11 または Wayland)。Vulkan 対応の GPU ドライバ (Mesa など) が必要です。
-ファイル選択ダイアログには xdg-desktop-portal (GNOME / KDE / GTK のいずれかの実装) を使います。
-Bluetooth 接続には BlueZ (`bluetoothctl`) と NetworkManager (`nmcli`) が必要です。\
-Ubuntu / Fedora のデスクトップには標準で入っています。
-
-## インストール
-
-[Releases](https://github.com/YutoMaeda1209/quaderno4linux/releases) から\
-deb (Ubuntu / Debian) か rpm (Fedora) をダウンロードしてインストールします。
-udev ルールとデスクトップエントリも一緒にインストールされます。
-
-```sh
-sudo apt install ./quaderno4linux_<バージョン>-1_amd64.deb    # Ubuntu / Debian
-sudo dnf install ./quaderno4linux-<バージョン>-1.x86_64.rpm   # Fedora
-```
+機能、動作環境、インストール方法、使い方、トラブルシューティング、プロトコルの概要は\
+[Wiki](https://github.com/YutoMaeda1209/quaderno4linux/wiki) を参照してください。
 
 ## ビルド
 
@@ -73,54 +30,8 @@ cargo build --release
 ./target/release/quaderno4linux
 ```
 
-### USB 接続のための設定 (初回のみ)
-
-deb / rpm でインストールした場合は udev ルールが入っているので、この設定は不要です。
-USB モードの切り替えには端末のシリアルポート (`/dev/ttyACM*`) への書き込み権限が必要です。
-権限がない状態で「USB で接続」を押すと、アプリが同梱の udev ルールを `/etc/udev/rules.d/70-quaderno.rules` にインストールするか確認します
-(管理者パスワードを求められます。polkit の `pkexec` を使います)。手動でインストールする場合は次のとおりです。
-
-```sh
-sudo cp packaging/linux/70-quaderno.rules /etc/udev/rules.d/
-sudo udevadm control --reload && sudo udevadm trigger
-```
-
-デスクトップエントリ: `packaging/linux/io.github.yutomaeda1209.quaderno4linux.desktop` を\
-`~/.local/share/applications/` にコピーします。
-
-## 使い方
-
-1. **USB**: 端末をケーブルでつなぎ「USB で接続」を押します。うまくいかない場合は方式ボタンで RNDIS / CDC-ECM を切り替えてください。
-2. **Wi-Fi**: 端末とパソコンを同じネットワークにつなぎ「端末を検索」を押して、見つかった端末をダブルクリックします。
-3. **Bluetooth**: 端末で Bluetooth のペアリング画面を開いたまま、OS の Bluetooth 設定で\
-   `FMVDP51_<シリアル番号下 7 桁>` とペアリングします (両方の画面に表示される 6 桁の数字を確認)。\
-   その後アプリで「端末を検索」を押し、Bluetooth 欄の端末の「接続」を押します。\
-   転送速度は Wi-Fi よりかなり遅く (実測 約 0.07 MB/s)、大きなファイルには USB か Wi-Fi が向いています。
-4. 初回はアプリと端末のペアリング (登録) を求められます。端末の画面に表示された PIN を入力してください。
-5. 右側のエクスプローラーでファイルを操作します。
-
-### トラブルシューティング
-
-- **USB で端末が応答しない**: USB Ethernet のインターフェース (`enx…` / `usb0` など) が有効になっている必要があります。
-  NetworkManager が DHCP 失敗でインターフェースを切断してしまう場合は、リンクローカル専用の接続を作成してください。
-
-  ```sh
-  nmcli connection add type ethernet con-name Quaderno ifname <インターフェース名> \
-    ipv4.method link-local ipv6.method link-local
-  ```
-
-- **Bluetooth で接続できない**: 端末は PAN 上で DHCP に応答しないため、アプリは\
-  `Quaderno Bluetooth <BD アドレス>` という NetworkManager の接続\
-  (PANU、IPv4 `172.25.48.2/24` 固定) を作成して使います。\
-  BNEP 接続は不安定なことがあり、アプリは 3 回まで再試行します。\
-  端末のアドレスは mDNS で探し、見つからなければ `172.25.48.1` を試します。\
-  `172.25.0.0/16` は Docker の既定ブリッジと重なることがあります。\
-  うまく通信できない場合は `ip route get 172.25.48.1` で経路を確認してください。
-- **アドレスの直接指定**: `quaderno4linux --connect 192.168.0.20` のように起動時に指定できます。\
-  IPv6 リンクローカルは `fe80::xxxx%enx0123456789ab` のようにインターフェース名を付けます。
-- **ログ**: エラーの詳細は `~/.local/state/quaderno4linux/quaderno4linux.log` に記録されます\
-  (起動ごとに上書き)。エラー通知の「ログを開く」から開けます。\
-  `RUST_LOG=debug quaderno4linux` でより詳細なログを出力します。
+USB 接続に必要な udev ルールとデスクトップエントリの設定は\
+[Wiki のインストール](https://github.com/YutoMaeda1209/quaderno4linux/wiki/インストール) を参照してください。
 
 ## 開発
 
@@ -128,18 +39,8 @@ sudo udevadm control --reload && sudo udevadm trigger
 
 VS Code の Dev Containers 拡張で開くと、GPUI のビルドに必要なライブラリを\
 `mcr.microsoft.com/devcontainers/rust:2.1.7-1-trixie` に加えた環境が起動します。\
-コンテナ内ではビルドとテスト (後述のモック端末を使った E2E テストを含む) を行い、\
+コンテナ内ではビルドとテスト ([モック端末](https://github.com/YutoMaeda1209/quaderno4linux/wiki/モック端末) を使った E2E テストを含む) を行い、\
 GUI の動作確認や実機との接続はホストで行ってください。
-
-### モック端末
-
-実機がなくても開発できるよう、端末をシミュレートするサーバー (`quaderno-mock`) を用意しています。
-ペアリング (PIN)・認証・文書 API を実装し、ファイルはメモリ上に保持します。
-
-```sh
-cargo run -p quaderno-mock -- 127.0.0.1 12345678   # アドレス, PIN
-cargo run -p quaderno4linux -- --connect 127.0.0.1  # 別ターミナルで
-```
 
 ### テスト
 
@@ -157,19 +58,5 @@ cargo fmt --all --check
 | `crates/quaderno4linux` | GPUI デスクトップアプリ |
 | `crates/quaderno-mock` | 開発・テスト用のモック端末 |
 | `packaging/linux` | udev ルール、デスクトップエントリ |
-
-### プロトコルについて
-
-[QUADERNO のプロトコル調査メモ](https://gist.github.com/YutoMaeda1209/d51764c40666c02df871c711d32ed837)\
-と [dpt-rp1-py](https://github.com/janten/dpt-rp1-py) を参考にしています。概要:
-
-- USB: シリアル (`04c5:1656`) に `01 00 00 01 00 00 00 01 <00=RNDIS|01=CDC-ECM> 04` を書き込むと\
-  USB Ethernet (`04c5:1657`) に切り替わる
-- Wi-Fi / Bluetooth: mDNS (`_dp_fujitsu._tcp.local.`) で検索。\
-  Bluetooth は Classic PAN (端末が NAP、PC が PANU)、DHCP なし
-- ポート 8080 (HTTP): 端末情報・ペアリング\
-  (DH group 14 + PBKDF2-HMAC-SHA256 + AES-128-CBC 鍵ラップ)。\
-  端末の DH 公開鍵 YB は受信したバイト列のまま HMAC に使う
-- ポート 8443 (HTTPS, 自己署名証明書): RSA 署名による認証後、`Credentials` クッキーで文書 API を利用
 
 コントリビュートの方法は [CONTRIBUTING.md](.github/CONTRIBUTING.md) を参照してください。
