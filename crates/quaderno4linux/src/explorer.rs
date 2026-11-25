@@ -107,9 +107,30 @@ impl QuadernoApp {
             path.push((entry.entry_id, entry.entry_name));
             self.navigate(path, window, cx);
         } else {
-            self.selection = [entry.entry_id].into();
-            self.download(window, cx);
+            self.selection = [entry.entry_id.clone()].into();
+            self.open_document(entry, window, cx);
         }
+    }
+
+    /// 文書を一時ディレクトリにダウンロードし、既定のアプリ (PDF ビューアー) で開く。
+    fn open_document(&mut self, entry: Entry, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(client) = self.require_client(window, cx) else { return };
+        // 同名の文書が別のフォルダにあっても衝突しないよう、文書 ID ごとにディレクトリを分ける。
+        let dir = std::env::temp_dir().join("quaderno4linux").join(&entry.entry_id);
+        self.run_task(
+            "ダウンロードしています",
+            window,
+            cx,
+            move |progress| {
+                progress.set_detail(entry.entry_name.clone());
+                std::fs::create_dir_all(&dir)?;
+                Ok(client.download_entry(&entry, &dir, &progress.callback())?)
+            },
+            |this, result, window, cx| match result {
+                Ok(path) => cx.open_with_system(&path),
+                Err(e) => this.notify_error("文書を開けません", &e, window, cx),
+            },
+        );
     }
 
     fn go_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {

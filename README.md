@@ -24,7 +24,7 @@ Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit)\
 | --- | --- |
 | 更新 | `F5` / `Ctrl+R` |
 | 親フォルダへ | `Backspace` / `Alt+↑` |
-| 開く (フォルダ) / ダウンロード (文書) | `Enter` / ダブルクリック |
+| 開く (フォルダは移動、文書は既定の PDF ビューアーで表示) | `Enter` / ダブルクリック |
 | すべて選択 / 複数選択 | `Ctrl+A` / `Ctrl+クリック`, `Shift+クリック` |
 | コピー / 切り取り / 貼り付け | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` |
 | 名前の変更 | `F2` |
