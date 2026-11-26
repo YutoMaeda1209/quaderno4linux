@@ -19,9 +19,9 @@ pub mod register;
 pub mod usb;
 
 pub use address::DeviceAddress;
-pub use client::{device_information, no_progress, DeviceClient, Progress};
+pub use client::{DeviceClient, Progress, device_information, no_progress};
 pub use credentials::{CredentialStore, Credentials};
-pub use discovery::{discover, DiscoveredDevice, Transport};
+pub use discovery::{DiscoveredDevice, Transport, discover};
 pub use error::{Error, Result};
-pub use model::{format_date, format_size, DeviceInfo, Entry, EntryType, ROOT_FOLDER_ID};
+pub use model::{DeviceInfo, Entry, EntryType, ROOT_FOLDER_ID, format_date, format_size};
 pub use register::Registration;

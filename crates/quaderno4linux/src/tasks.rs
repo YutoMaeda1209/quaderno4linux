@@ -78,16 +78,18 @@ impl QuadernoApp {
         });
 
         // 進捗が見えるよう、定期的に再描画する。
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(150)).await;
-            let running = this
-                .update(cx, |this, cx| {
-                    cx.notify();
-                    this.busy.is_some()
-                })
-                .unwrap_or(false);
-            if !running {
-                break;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(150)).await;
+                let running = this
+                    .update(cx, |this, cx| {
+                        cx.notify();
+                        this.busy.is_some()
+                    })
+                    .unwrap_or(false);
+                if !running {
+                    break;
+                }
             }
         })
         .detach();

@@ -9,15 +9,15 @@ use gpui_kit::component::empty::{Empty, EmptyDescription, EmptyHeader, EmptyMedi
 use gpui_kit::component::separator::Separator;
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
 use gpui_kit::component::toolbar::Toolbar;
-use gpui_kit::component::{h_flex, v_flex, ActiveTheme, Disableable, Icon, IconName, Sizable};
+use gpui_kit::component::{ActiveTheme, Disableable, Icon, IconName, Sizable, h_flex, v_flex};
 use gpui_kit::{
-    div, prelude::*, px, App, ClickEvent, Context, Div, ExternalPaths, PathPromptOptions, SharedString, Stateful,
-    WeakEntity, Window,
+    App, ClickEvent, Context, Div, ExternalPaths, PathPromptOptions, SharedString, Stateful, WeakEntity, Window, div,
+    prelude::*, px,
 };
-use quaderno_core::{format_date, format_size, DeviceClient, Entry};
+use quaderno_core::{DeviceClient, Entry, format_date, format_size};
 
 use crate::app::actions::*;
-use crate::app::{device_status, is_double_click, Clipboard, ClipboardMode, Connection, QuadernoApp};
+use crate::app::{Clipboard, ClipboardMode, Connection, QuadernoApp, device_status, is_double_click};
 use crate::tasks::TaskProgress;
 
 impl QuadernoApp {
@@ -574,7 +574,7 @@ impl QuadernoApp {
 
     // ----- 描画 ---------------------------------------------------------
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let enabled = self.can_operate();
         let has_sel = !self.selection.is_empty();
         let one_sel = self.selection.len() == 1;
@@ -648,7 +648,7 @@ impl QuadernoApp {
         div().px_2().py_1().border_b_1().border_color(cx.theme().border).child(toolbar)
     }
 
-    fn render_breadcrumb(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_breadcrumb(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let enabled = self.can_operate();
         let items = self.path.iter().enumerate().map(|(depth, (_, name))| {
             let last = depth + 1 == self.path.len();
@@ -662,7 +662,7 @@ impl QuadernoApp {
         h_flex().px_3().py_2().child(Breadcrumb::new().children(items))
     }
 
-    pub fn render_explorer(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_explorer(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = cx.theme().clone();
 
         let body = if self.client().is_none() {

@@ -4,12 +4,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
+use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::{Button, ButtonVariant};
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::notification::{Notification, NotificationType};
-use gpui_kit::component::WindowExt;
-use gpui_kit::{prelude::*, px, Context, Entity, Focusable, SharedString, Window};
+use gpui_kit::{Context, Entity, Focusable, SharedString, Window, prelude::*, px};
 
 use crate::app::QuadernoApp;
 

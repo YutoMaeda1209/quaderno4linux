@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use gpui_kit::component::{Theme, TitleBar};
-use gpui_kit::{px, size, Anchor, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions};
+use gpui_kit::{Anchor, App, AppContext, Bounds, KeyBinding, WindowBounds, WindowOptions, px, size};
 
 use crate::app::QuadernoApp;
 

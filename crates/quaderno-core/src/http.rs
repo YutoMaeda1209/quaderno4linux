@@ -5,7 +5,7 @@ use std::time::Duration;
 use reqwest::blocking::{Client, Response};
 use serde::Deserialize;
 
-use crate::address::{DeviceAddress, DEVICE_HOST, HTTPS_PORT, HTTP_PORT};
+use crate::address::{DEVICE_HOST, DeviceAddress, HTTP_PORT, HTTPS_PORT};
 use crate::error::{Error, Result};
 
 /// プレースホルダーのホスト名を通して `addr` と通信するクライアントを作る。端末は自己署名証明書を使

@@ -6,20 +6,20 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use reqwest::blocking::{multipart, Client, RequestBuilder, Response};
+use base64::engine::general_purpose::STANDARD as B64;
 use reqwest::Method;
+use reqwest::blocking::{Client, RequestBuilder, Response, multipart};
 use rsa::Pkcs1v15Sign;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::address::DeviceAddress;
 use crate::credentials::Credentials;
 use crate::error::{Error, Result};
 use crate::http::{build_client, check, http_url, https_url};
-use crate::model::{BatteryStatus, DeviceInfo, Entry, EntryList, StorageStatus, ROOT_FOLDER_ID};
+use crate::model::{BatteryStatus, DeviceInfo, Entry, EntryList, ROOT_FOLDER_ID, StorageStatus};
 
 /// 認証不要の端末情報 (`:8080/register/information`) を読み取る。
 pub fn device_information(addr: &DeviceAddress, timeout: Duration) -> Result<DeviceInfo> {
@@ -339,11 +339,7 @@ fn entry_api_path(entry: &Entry) -> String {
 
 /// 名前の変更や移動のリクエストで、項目の名前を渡すキー。
 fn name_key(entry: &Entry) -> &'static str {
-    if entry.is_folder() {
-        "folder_name"
-    } else {
-        "file_name"
-    }
+    if entry.is_folder() { "folder_name" } else { "file_name" }
 }
 
 /// ローカルのファイル名に使えない文字を置き換える。

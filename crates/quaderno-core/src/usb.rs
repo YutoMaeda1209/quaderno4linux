@@ -80,10 +80,11 @@ pub fn find_serial_ports() -> Vec<PathBuf> {
         if !name.starts_with("ttyACM") {
             continue;
         }
-        if let Some((v, p)) = usb_ids(&entry.path().join("device")) {
-            if v == VENDOR_ID && p == PRODUCT_ID_SERIAL {
-                out.push(PathBuf::from("/dev").join(name));
-            }
+        if let Some((v, p)) = usb_ids(&entry.path().join("device"))
+            && v == VENDOR_ID
+            && p == PRODUCT_ID_SERIAL
+        {
+            out.push(PathBuf::from("/dev").join(name));
         }
     }
     out.sort();

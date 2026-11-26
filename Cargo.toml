@@ -4,7 +4,7 @@ members = ["crates/quaderno-core", "crates/quaderno4linux", "crates/quaderno-moc
 
 [workspace.package]
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/YutoMaeda1209/quaderno4linux"
 license = "MIT"
 

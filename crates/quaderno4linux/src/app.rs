@@ -12,13 +12,13 @@ use gpui_kit::component::progress::Progress;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::table::TableState;
-use gpui_kit::component::{h_flex, v_flex, ActiveTheme, Disableable, IconName, Sizable, TitleBar};
-use gpui_kit::{div, prelude::*, px, ClickEvent, Context, Entity, FocusHandle, Focusable, StyleRefinement, Window};
+use gpui_kit::component::{ActiveTheme, Disableable, IconName, Sizable, TitleBar, h_flex, v_flex};
+use gpui_kit::{ClickEvent, Context, Entity, FocusHandle, Focusable, StyleRefinement, Window, div, prelude::*, px};
 use quaderno_core::bluetooth::{self, BluetoothDevice};
 use quaderno_core::usb::UsbNetMode;
 use quaderno_core::{
-    format_size, usb, CredentialStore, Credentials, DeviceAddress, DeviceClient, DiscoveredDevice, Entry, Error,
-    Registration, Transport, ROOT_FOLDER_ID,
+    CredentialStore, Credentials, DeviceAddress, DeviceClient, DiscoveredDevice, Entry, Error, ROOT_FOLDER_ID,
+    Registration, Transport, format_size, usb,
 };
 
 use crate::explorer::EntryTable;
@@ -510,7 +510,7 @@ impl QuadernoApp {
 
     // ----- 描画 ---------------------------------------------------------
 
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let busy = self.busy.is_some();
         let connected = matches!(self.connection, Connection::Connected { .. });
         let bluetooth_section = self.render_bluetooth(busy || connected, cx);
@@ -641,7 +641,7 @@ impl QuadernoApp {
             .child(section("pairing", "ペアリング").child(pairing_status).child(h_flex().child(pair_button)))
     }
 
-    fn render_bluetooth(&self, disabled: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_bluetooth(&self, disabled: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = cx.theme();
         if self.bt_devices.is_empty() {
             return v_flex().child(div().text_xs().text_color(theme.muted_foreground).child(
@@ -671,7 +671,7 @@ impl QuadernoApp {
         }))
     }
 
-    fn render_status_bar(&self) -> impl IntoElement {
+    fn render_status_bar(&self) -> impl IntoElement + use<> {
         let mut bar = StatusBar::new().h(px(30.)).px_3().flex_shrink_0();
         if let Some(busy) = &self.busy {
             let s = busy.snapshot();
@@ -744,16 +744,16 @@ fn device_alive(client: &DeviceClient) -> bool {
 /// サイドバーに表示するバッテリーと容量の概要。
 pub fn device_status(client: &DeviceClient) -> String {
     let mut parts = Vec::new();
-    if let Ok(b) = client.battery() {
-        if let Some(level) = b.level {
-            let plugged = b.plugged.as_deref().is_some_and(|p| p != "not_plugged" && p != "false");
-            parts.push(format!("バッテリー {level}%{}", if plugged { " (充電中)" } else { "" }));
-        }
+    if let Ok(b) = client.battery()
+        && let Some(level) = b.level
+    {
+        let plugged = b.plugged.as_deref().is_some_and(|p| p != "not_plugged" && p != "false");
+        parts.push(format!("バッテリー {level}%{}", if plugged { " (充電中)" } else { "" }));
     }
-    if let Ok(s) = client.storage() {
-        if let (Some(avail), Some(cap)) = (s.available, s.capacity) {
-            parts.push(format!("空き {} / {}", format_size(avail), format_size(cap)));
-        }
+    if let Ok(s) = client.storage()
+        && let (Some(avail), Some(cap)) = (s.available, s.capacity)
+    {
+        parts.push(format!("空き {} / {}", format_size(avail), format_size(cap)));
     }
     if let Ok(v) = client.firmware_version() {
         parts.push(format!("FW {v}"));

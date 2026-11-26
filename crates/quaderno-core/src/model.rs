@@ -113,11 +113,7 @@ pub fn format_size(bytes: u64) -> String {
         value /= 1024.0;
         unit += 1;
     }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
+    if unit == 0 { format!("{bytes} B") } else { format!("{value:.1} {}", UNITS[unit]) }
 }
 
 /// 端末の ISO-8601 タイムスタンプ (`2024-01-02T03:04:05Z`) を `2024-01-02 03:04` に整形する。
