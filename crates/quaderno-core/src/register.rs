@@ -12,17 +12,17 @@
 //! 手順 1〜3 は [`Registration::start`] で実行し、残りの手順は画面に表示された PIN をユーザーが
 //! 入力したあと [`Registration::finish`] で実行する。
 
-use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64;
 use reqwest::blocking::Client;
-use rsa::pkcs8::{EncodePublicKey, LineEnding};
 use rsa::RsaPrivateKey;
+use rsa::pkcs8::{EncodePublicKey, LineEnding};
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::address::DeviceAddress;
 use crate::credentials::Credentials;
-use crate::crypto::{normalize_dh, random_bytes, DiffieHellman, SessionKeys};
+use crate::crypto::{DiffieHellman, SessionKeys, normalize_dh, random_bytes};
 use crate::error::{Error, Result};
 use crate::http::{build_client, check, http_url};
 

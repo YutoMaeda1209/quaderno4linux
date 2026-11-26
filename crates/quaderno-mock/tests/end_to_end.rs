@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
-use quaderno_core::{no_progress, CredentialStore, DeviceAddress, DeviceClient, Registration, ROOT_FOLDER_ID};
+use quaderno_core::{CredentialStore, DeviceAddress, DeviceClient, ROOT_FOLDER_ID, Registration, no_progress};
 use quaderno_mock::MockDevice;
 
 #[test]

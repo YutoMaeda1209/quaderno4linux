@@ -5,9 +5,9 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+use rsa::RsaPrivateKey;
 use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
 use rsa::pkcs8::{DecodePrivateKey, LineEnding};
-use rsa::RsaPrivateKey;
 
 use crate::error::{Error, Result};
 

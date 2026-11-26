@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use crate::address::DeviceAddress;
 use crate::client::device_information;
-use crate::discovery::{discover, Transport};
+use crate::discovery::{Transport, discover};
 use crate::error::{Error, Result};
 
 /// Bluetooth NAP (Network Access Point) サービスクラスの UUID。
@@ -190,10 +190,11 @@ fn profile_settings(dev: &BluetoothDevice) -> Vec<String> {
     .map(|s| s.to_string())
     .collect();
     // 現在のユーザーが所有するプロファイルは管理者権限なしで管理できる。
-    if let Ok(user) = std::env::var("USER") {
-        if !user.is_empty() && user != "root" {
-            args.extend(["connection.permissions".to_string(), format!("user:{user}")]);
-        }
+    if let Ok(user) = std::env::var("USER")
+        && !user.is_empty()
+        && user != "root"
+    {
+        args.extend(["connection.permissions".to_string(), format!("user:{user}")]);
     }
     args
 }

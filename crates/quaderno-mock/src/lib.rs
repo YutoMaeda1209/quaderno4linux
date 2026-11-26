@@ -9,15 +9,15 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use anyhow::{anyhow, Context, Result};
-use base64::engine::general_purpose::STANDARD as B64;
+use anyhow::{Context, Result, anyhow};
 use base64::Engine;
-use quaderno_core::address::{HTTPS_PORT, HTTP_PORT};
-use quaderno_core::crypto::{normalize_dh, random_bytes, DiffieHellman, SessionKeys};
+use base64::engine::general_purpose::STANDARD as B64;
 use quaderno_core::ROOT_FOLDER_ID;
+use quaderno_core::address::{HTTP_PORT, HTTPS_PORT};
+use quaderno_core::crypto::{DiffieHellman, SessionKeys, normalize_dh, random_bytes};
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Pkcs1v15Sign, RsaPublicKey};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tiny_http::{Header, Method, Request, Response, Server};
 

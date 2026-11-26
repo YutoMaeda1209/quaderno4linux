@@ -5,7 +5,7 @@
 //! * HMAC-SHA256 によるメッセージ認証
 //! * AES-128-CBC の「鍵ラップ」 (`AES-CBC(PKCS7(data || HMAC(data)[..8])) || IV`)
 
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
 use hmac::{Hmac, Mac};
 use num_bigint::{BigUint, RandBigInt};
 use rand::RngCore;
