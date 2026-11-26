@@ -5453,7 +5453,7 @@ dependencies = [
 
 [[package]]
 name = "quaderno-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -5479,7 +5479,7 @@ dependencies = [
 
 [[package]]
 name = "quaderno-mock"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5499,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "quaderno4linux"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
