@@ -792,8 +792,17 @@ impl Render for QuadernoApp {
             .child(
                 TitleBar::new().child(
                     h_flex()
-                        .gap_2()
-                        .child(div().text_sm().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Quaderno4Linux")),
+                        .flex_1()
+                        .pr_2()
+                        .justify_between()
+                        .child(div().text_sm().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Quaderno4Linux"))
+                        .child(
+                            Button::new("licenses")
+                                .label("ライセンス")
+                                .small()
+                                .ghost()
+                                .on_click(cx.listener(|this, _, window, cx| this.show_licenses(window, cx))),
+                        ),
                 ),
             )
             .child(h_flex().flex_1().min_h_0().child(sidebar).child(explorer))
