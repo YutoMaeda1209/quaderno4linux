@@ -1,8 +1,11 @@
-//! モック端末とペアリングし、クライアントのすべてのファイル操作を試す。
+//! モック端末とペアリングし、クライアントのすべてのファイル操作と設定の読み書きを試す。
 
 use std::net::{IpAddr, Ipv4Addr};
+use std::time::{Duration, UNIX_EPOCH};
 
-use quaderno_core::{CredentialStore, DeviceAddress, DeviceClient, ROOT_FOLDER_ID, Registration, no_progress};
+use quaderno_core::{
+    CredentialStore, DeviceAddress, DeviceClient, DeviceSettings, ROOT_FOLDER_ID, Registration, no_progress,
+};
 use quaderno_mock::MockDevice;
 
 #[test]
@@ -87,6 +90,17 @@ fn pairing_and_file_operations() {
     let renamed = client.resolve_path("Document/A/renamed.pdf").unwrap();
     client.delete(&renamed).unwrap();
     assert_eq!(client.list_folder(&a).unwrap().len(), 1);
+
+    // 設定の読み書き。変わった項目だけを書き込む。
+    let settings = client.settings().unwrap();
+    assert_eq!(settings.time_format, "24hour");
+    assert_eq!(settings.timezone, "Asia/Tokyo");
+    let new = DeviceSettings { owner: "山田".into(), timeout_to_standby: "never".into(), ..settings.clone() };
+    client.update_settings(&settings, &new).unwrap();
+    assert_eq!(client.settings().unwrap(), new);
+    assert!(client.set_config("time_format", "48hour").is_err());
+    client.set_datetime(UNIX_EPOCH + Duration::from_secs(86_400)).unwrap();
+    assert_eq!(device.config("datetime").as_deref(), Some("1970-01-02T00:00:00Z"));
 
     // 保存した認証情報で再び認証できる。
     let creds = store.load().unwrap().unwrap();

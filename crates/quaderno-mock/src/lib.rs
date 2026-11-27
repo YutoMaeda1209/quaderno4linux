@@ -69,6 +69,8 @@ struct State {
     sessions: Vec<String>,
     nodes: HashMap<String, Node>,
     next_id: u64,
+    /// `/system/configs/{key}` の値。
+    configs: HashMap<String, String>,
 }
 
 /// 実行中のモック端末のハンドル。
@@ -91,6 +93,16 @@ impl MockDevice {
             sessions: Vec::new(),
             nodes,
             next_id: 1,
+            configs: [
+                ("owner", ""),
+                ("timeout_to_standby", "10"),
+                ("date_format", "yyyy/M/d"),
+                ("time_format", "24hour"),
+                ("timezone", "Asia/Tokyo"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
         }));
 
         let cert = rcgen::generate_simple_self_signed(vec!["quaderno.device".into()])?;
@@ -140,6 +152,11 @@ impl MockDevice {
             .collect()
     }
 
+    /// `/system/configs/{key}` の値 (アサーション用)。`datetime` は書き込まれた値を返す。
+    pub fn config(&self, key: &str) -> Option<String> {
+        self.state.lock().unwrap().configs.get(key).cloned()
+    }
+
     /// すべてのフォルダのパス (アサーション用)。
     pub fn folders(&self) -> Vec<String> {
         let s = self.state.lock().unwrap();
@@ -151,20 +168,7 @@ impl MockDevice {
 }
 
 fn now() -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    // 日数から暦日への変換 (UTC)。表示用には十分。
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    quaderno_core::format_utc(std::time::SystemTime::now())
 }
 
 impl Node {
@@ -468,6 +472,26 @@ fn api(
             json_resp(200, json!({ "capacity": "15000000000", "available": "12345678901" }))
         }
         (Method::Get, ["system", "status", "firmware_version"]) => json_resp(200, json!({ "value": "2.2.09.11030FP" })),
+        (Method::Get, ["system", "configs", key]) => match s.configs.get(*key) {
+            // `datetime` は書き込み専用。
+            Some(v) if *key != "datetime" => json_resp(200, json!({ "value": v })),
+            _ => err(404, "40401", "not found"),
+        },
+        (Method::Put, ["system", "configs", key]) => {
+            let v = body_json()?;
+            let value = v["value"].as_str().context("value")?.to_string();
+            let valid = match *key {
+                "time_format" => matches!(value.as_str(), "12hour" | "24hour"),
+                "timeout_to_standby" => value == "never" || value.parse::<u32>().is_ok(),
+                "datetime" => true,
+                _ => s.configs.contains_key(*key),
+            };
+            if !valid {
+                return Ok(err(400, "40001", "invalid value"));
+            }
+            s.configs.insert(key.to_string(), value);
+            no_content()
+        }
         (Method::Get, ["folders", id, "entries"]) | (Method::Get, ["folders", id, "entries2"]) => {
             if !s.is_folder(id) {
                 return Ok(err(404, "40401", "folder not found"));

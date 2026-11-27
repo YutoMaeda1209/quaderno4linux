@@ -3,6 +3,7 @@
 mod app;
 mod dialogs;
 mod explorer;
+mod settings;
 mod tasks;
 
 use std::fs::File;
