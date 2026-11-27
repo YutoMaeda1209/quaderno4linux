@@ -94,7 +94,6 @@ impl MockDevice {
             nodes,
             next_id: 1,
             configs: [
-                ("owner", ""),
                 ("timeout_to_standby", "10"),
                 ("date_format", "yyyy/M/d"),
                 ("time_format", "24hour"),

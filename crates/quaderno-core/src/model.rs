@@ -100,8 +100,6 @@ pub struct StorageStatus {
 /// 端末の設定 (`/system/configs/{key}`)。値は端末が返す文字列のまま持つ。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DeviceSettings {
-    /// 所有者名。
-    pub owner: String,
     /// スタンバイになるまでの分数。スタンバイにしない場合は `never`。
     pub timeout_to_standby: String,
     /// 日付の形式 (`yyyy/M/d` など)。
@@ -113,22 +111,16 @@ pub struct DeviceSettings {
 }
 
 impl DeviceSettings {
-    pub const KEYS: [&str; 5] = ["owner", "timeout_to_standby", "date_format", "time_format", "timezone"];
+    pub const KEYS: [&str; 4] = ["timeout_to_standby", "date_format", "time_format", "timezone"];
 
     /// `KEYS` の各キーの値への参照 (`KEYS` と同じ順)。
-    pub fn values_mut(&mut self) -> [&mut String; 5] {
-        [
-            &mut self.owner,
-            &mut self.timeout_to_standby,
-            &mut self.date_format,
-            &mut self.time_format,
-            &mut self.timezone,
-        ]
+    pub fn values_mut(&mut self) -> [&mut String; 4] {
+        [&mut self.timeout_to_standby, &mut self.date_format, &mut self.time_format, &mut self.timezone]
     }
 
     /// `KEYS` と同じ順の値。
-    pub fn values(&self) -> [&str; 5] {
-        [&self.owner, &self.timeout_to_standby, &self.date_format, &self.time_format, &self.timezone]
+    pub fn values(&self) -> [&str; 4] {
+        [&self.timeout_to_standby, &self.date_format, &self.time_format, &self.timezone]
     }
 
     /// `self` から `new` で値が変わったキーと、その新しい値。
@@ -219,9 +211,9 @@ mod tests {
 
     #[test]
     fn settings_changes() {
-        let old = DeviceSettings { owner: "a".into(), time_format: "24hour".into(), ..Default::default() };
-        let new = DeviceSettings { owner: "b".into(), timezone: "Asia/Tokyo".into(), ..old.clone() };
-        assert_eq!(old.changes(&new), vec![("owner", "b"), ("timezone", "Asia/Tokyo")]);
+        let old = DeviceSettings { time_format: "24hour".into(), ..Default::default() };
+        let new = DeviceSettings { date_format: "M/d/yyyy".into(), timezone: "Asia/Tokyo".into(), ..old.clone() };
+        assert_eq!(old.changes(&new), vec![("date_format", "M/d/yyyy"), ("timezone", "Asia/Tokyo")]);
         assert!(new.changes(&new).is_empty());
     }
 }

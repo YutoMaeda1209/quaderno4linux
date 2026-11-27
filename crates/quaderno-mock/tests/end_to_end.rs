@@ -95,7 +95,7 @@ fn pairing_and_file_operations() {
     let settings = client.settings().unwrap();
     assert_eq!(settings.time_format, "24hour");
     assert_eq!(settings.timezone, "Asia/Tokyo");
-    let new = DeviceSettings { owner: "山田".into(), timeout_to_standby: "never".into(), ..settings.clone() };
+    let new = DeviceSettings { timeout_to_standby: "never".into(), ..settings.clone() };
     client.update_settings(&settings, &new).unwrap();
     assert_eq!(client.settings().unwrap(), new);
     assert!(client.set_config("time_format", "48hour").is_err());

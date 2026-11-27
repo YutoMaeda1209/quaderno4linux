@@ -5,7 +5,6 @@ use std::time::SystemTime;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::form::{field, v_form};
-use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectState};
 use gpui_kit::component::{IndexPath, Sizable, WindowExt, h_flex};
@@ -88,7 +87,6 @@ impl QuadernoApp {
     }
 
     fn show_device_settings(&mut self, current: DeviceSettings, window: &mut Window, cx: &mut Context<Self>) {
-        let owner = cx.new(|cx| InputState::new(window, cx).default_value(current.owner.clone()));
         let standby = choice_select(
             STANDBY_MINUTES
                 .iter()
@@ -125,8 +123,8 @@ impl QuadernoApp {
         let view = cx.entity();
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let (view, current) = (view.clone(), current.clone());
-            let (owner, standby, date_format, time_format, timezone) =
-                (owner.clone(), standby.clone(), date_format.clone(), time_format.clone(), timezone.clone());
+            let (standby, date_format, time_format, timezone) =
+                (standby.clone(), date_format.clone(), time_format.clone(), timezone.clone());
             let sync_clock = {
                 let view = view.clone();
                 Button::new("sync-clock")
@@ -136,7 +134,6 @@ impl QuadernoApp {
                     .on_click(move |_, window, cx| view.update(cx, |this, cx| this.sync_device_clock(window, cx)))
             };
             let form = v_form()
-                .child(field().label("所有者名").child(Input::new(&owner)))
                 .child(field().label("スタンバイまでの時間").child(Select::new(&standby)))
                 .child(field().label("日付の形式").child(Select::new(&date_format)))
                 .child(field().label("時刻の形式").child(Select::new(&time_format)))
@@ -153,7 +150,6 @@ impl QuadernoApp {
                         select.read(cx).selected_value().cloned().unwrap_or_else(|| fallback.to_string())
                     };
                     let new = DeviceSettings {
-                        owner: owner.read(cx).value().trim().to_string(),
                         timeout_to_standby: selected(&standby, cx, &current.timeout_to_standby),
                         date_format: selected(&date_format, cx, &current.date_format),
                         time_format: selected(&time_format, cx, &current.time_format),
