@@ -9,16 +9,17 @@ use gpui_kit::component::form::{field, v_form};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt, h_flex, v_flex};
 use gpui_kit::{AnyElement, App, Context, Entity, SharedString, Window, div, prelude::*, px};
 use quaderno_core::{EapConfig, Error, Proxy, StaticIp, WifiConfig, WifiNetwork, WifiStatus};
 
 use crate::app::QuadernoApp;
-use crate::settings::{ChoiceSelect, choice, choice_select};
+use crate::settings::{ChoiceSelect, Loading, choice, choice_select, load_failed, loading_indicator, set_loaded};
 
-/// Wi-Fi のタブに表示する状態。読み込めなかったときは `None`。
-pub(crate) type WifiPanel = Entity<Option<WifiStatus>>;
+/// Wi-Fi のタブに表示する状態。
+pub(crate) type WifiPanel = Entity<Loading<WifiStatus>>;
 
 /// 検索で見つかったネットワークの選択肢。値は検索結果での位置。
 #[derive(Clone)]
@@ -48,12 +49,10 @@ const EAP_PHASE2: [(&str, &str); 4] = [("mschapv2", "MSCHAPv2"), ("gtc", "GTC"),
 pub(crate) fn wifi_tab(view: &Entity<QuadernoApp>, panel: &WifiPanel, cx: &App) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let note = div().text_xs().text_color(muted).child("Wi-Fi の設定は、操作するとすぐに端末に反映されます。");
-    let Some(status) = panel.read(cx).clone() else {
-        return v_flex()
-            .gap_3()
-            .child(note)
-            .child(div().text_sm().text_color(muted).child("Wi-Fi の設定を読み込めませんでした"))
-            .into_any_element();
+    let status = match panel.read(cx) {
+        Loading::Ready(status) => status.clone(),
+        Loading::Pending => return loading_indicator("Wi-Fi の設定を読み込んでいます", cx),
+        Loading::Failed => return load_failed("Wi-Fi の設定を読み込めませんでした", cx),
     };
 
     let toggle = {
@@ -306,81 +305,66 @@ impl QuadernoApp {
         );
     }
 
-    /// 周囲のネットワークを検索してから、ネットワークを追加するダイアログを開く。
+    /// ネットワークを追加するダイアログを開き、周囲のネットワークを検索する。検索している間も、
+    /// ネットワークは手動で入力できる。
     fn open_add_wifi(&mut self, panel: WifiPanel, window: &mut Window, cx: &mut Context<Self>) {
         let Some(client) = self.client() else { return };
-        self.run_task(
-            "ネットワークを検索しています",
-            window,
-            cx,
-            move |_| Ok(client.scan_wifi()?),
-            move |this, result, window, cx| {
-                // 検索できなくても、ネットワークは手動で入力できる。
-                let networks = result.unwrap_or_else(|e| {
-                    log::warn!("ネットワークを検索できませんでした: {e:#}");
-                    Vec::new()
-                });
-                this.show_add_wifi(networks, panel, window, cx);
-            },
-        );
+        let form = AddWifiForm::new(window, cx);
+        // 見つかったネットワークの選択欄。見つからなければ `None`。
+        let scan: Entity<Loading<Option<NetworkSelect>>> = cx.new(|_| Loading::Pending);
+        let started =
+            self.run_task("ネットワークを検索しています", window, cx, move |_| Ok(client.scan_wifi()?), {
+                let (form, scan) = (form.clone(), scan.clone());
+                move |_, result, window, cx| {
+                    let value = match result {
+                        Ok(networks) => Loading::Ready(network_select(networks, &form, window, cx)),
+                        Err(e) => {
+                            log::warn!("ネットワークを検索できませんでした: {e:#}");
+                            Loading::Failed
+                        }
+                    };
+                    set_loaded(&scan, value, cx);
+                }
+            });
+        if started {
+            self.show_add_wifi(form, scan, panel, window, cx);
+        }
     }
 
     fn show_add_wifi(
         &mut self,
-        mut networks: Vec<WifiNetwork>,
+        form: AddWifiForm,
+        scan: Entity<Loading<Option<NetworkSelect>>>,
         panel: WifiPanel,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // SSID を公開していないネットワークは名前を入力して追加する。同じネットワークは 1 つにまとめる。
-        networks.retain(|n| !n.ssid.is_empty());
-        let mut seen = HashSet::new();
-        networks.retain(|n| seen.insert((n.ssid.clone(), n.security.clone())));
-
-        let form = AddWifiForm::new(window, cx);
-        let scan: Option<NetworkSelect> = (!networks.is_empty()).then(|| {
-            let choices: Vec<NetworkChoice> = networks
-                .iter()
-                .enumerate()
-                .map(|(index, n)| {
-                    let mut detail = vec![security_label(&n.security)];
-                    if let Some(band) = n.frequency_band.as_deref() {
-                        detail.push(band_label(band));
-                    }
-                    NetworkChoice { index, label: format!("{} ({})", n.ssid, detail.join("、")).into() }
-                })
-                .collect();
-            let select = cx.new(|cx| SelectState::new(SearchableVec::new(choices), None, window, cx).searchable(true));
-            // 選んだネットワークの名前とセキュリティを入力欄に写す。
-            let form = form.clone();
-            cx.subscribe_in(
-                &select,
-                window,
-                move |_, _, event: &SelectEvent<SearchableVec<NetworkChoice>>, window, cx| {
-                    let SelectEvent::Confirm(Some(index)) = event else { return };
-                    let Some(network) = networks.get(*index) else { return };
-                    form.ssid.update(cx, |s, cx| s.set_value(network.ssid.clone(), window, cx));
-                    form.security.update(cx, |s, cx| s.set_selected_value(&network.security, window, cx));
-                },
-            )
-            .detach();
-            select
-        });
-
         let view = cx.entity();
         window.open_alert_dialog(cx, move |dialog, _, cx| {
             let (view, panel, form) = (view.clone(), panel.clone(), form.clone());
             let values = form.values(cx);
-            let mut fields = v_form();
-            if let Some(scan) = &scan {
-                fields = fields.child(
+            let muted = cx.theme().muted_foreground;
+            let nearby = match scan.read(cx) {
+                Loading::Pending => h_flex()
+                    .gap_2()
+                    .child(Spinner::new().small())
+                    .child(div().text_sm().text_color(muted).child("検索しています"))
+                    .into_any_element(),
+                Loading::Ready(Some(select)) => {
+                    Select::new(select).placeholder("選択してください").menu_max_h(px(240.)).into_any_element()
+                }
+                Loading::Ready(None) => {
+                    div().text_sm().text_color(muted).child("見つかりませんでした").into_any_element()
+                }
+                Loading::Failed => div().text_sm().text_color(muted).child("検索できませんでした").into_any_element(),
+            };
+            let mut fields = v_form()
+                .child(
                     field()
                         .label("周辺のネットワーク")
                         .description("選ぶと、ネットワーク名とセキュリティを入力します。")
-                        .child(Select::new(scan).placeholder("選択してください").menu_max_h(px(240.))),
-                );
-            }
-            fields = fields
+                        .child(nearby),
+                )
                 .child(field().label("ネットワーク名 (SSID)").child(Input::new(&form.ssid)))
                 .child(field().label("セキュリティ").child(Select::new(&form.security)));
             if values.security == "eap" {
@@ -427,10 +411,8 @@ impl QuadernoApp {
                 .confirm()
                 .button_props(DialogButtonProps::default().ok_text("追加").cancel_text("キャンセル"))
                 .on_ok(move |_, window, cx| match build_config(&form.values(cx)) {
-                    Ok(config) => {
-                        view.update(cx, |this, cx| this.add_wifi(config, panel.clone(), window, cx));
-                        true
-                    }
+                    // 別の処理を実行中で追加できなければ、入力を残すためにダイアログを閉じない。
+                    Ok(config) => view.update(cx, |this, cx| this.add_wifi(config, panel.clone(), window, cx)),
                     Err(message) => {
                         view.update(cx, |this, cx| this.notify_warning(message, window, cx));
                         false
@@ -439,8 +421,8 @@ impl QuadernoApp {
         });
     }
 
-    fn add_wifi(&mut self, config: WifiConfig, panel: WifiPanel, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(client) = self.client() else { return };
+    fn add_wifi(&mut self, config: WifiConfig, panel: WifiPanel, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(client) = self.client() else { return true };
         self.run_task(
             "ネットワークを追加しています",
             window,
@@ -467,15 +449,49 @@ impl QuadernoApp {
                 ),
                 Err(e) => this.notify_error("ネットワークを追加できませんでした", &e, window, cx),
             },
-        );
+        )
     }
 }
 
+/// 見つかったネットワークの選択欄。選んだネットワークの名前とセキュリティを入力欄に写す。
+fn network_select(
+    mut networks: Vec<WifiNetwork>,
+    form: &AddWifiForm,
+    window: &mut Window,
+    cx: &mut Context<QuadernoApp>,
+) -> Option<NetworkSelect> {
+    // SSID を公開していないネットワークは名前を入力して追加する。同じネットワークは 1 つにまとめる。
+    networks.retain(|n| !n.ssid.is_empty());
+    let mut seen = HashSet::new();
+    networks.retain(|n| seen.insert((n.ssid.clone(), n.security.clone())));
+    if networks.is_empty() {
+        return None;
+    }
+    let choices: Vec<NetworkChoice> = networks
+        .iter()
+        .enumerate()
+        .map(|(index, n)| {
+            let mut detail = vec![security_label(&n.security)];
+            if let Some(band) = n.frequency_band.as_deref() {
+                detail.push(band_label(band));
+            }
+            NetworkChoice { index, label: format!("{} ({})", n.ssid, detail.join("、")).into() }
+        })
+        .collect();
+    let select = cx.new(|cx| SelectState::new(SearchableVec::new(choices), None, window, cx).searchable(true));
+    let form = form.clone();
+    cx.subscribe_in(&select, window, move |_, _, event: &SelectEvent<SearchableVec<NetworkChoice>>, window, cx| {
+        let SelectEvent::Confirm(Some(index)) = event else { return };
+        let Some(network) = networks.get(*index) else { return };
+        form.ssid.update(cx, |s, cx| s.set_value(network.ssid.clone(), window, cx));
+        form.security.update(cx, |s, cx| s.set_selected_value(&network.security, window, cx));
+    })
+    .detach();
+    Some(select)
+}
+
 fn update_panel(panel: &WifiPanel, status: WifiStatus, cx: &mut Context<QuadernoApp>) {
-    panel.update(cx, |s, cx| {
-        *s = Some(status);
-        cx.notify();
-    });
+    set_loaded(panel, Loading::Ready(status), cx);
 }
 
 /// 入力欄の値を確かめて、登録する設定にする。問題があればその説明を返す。

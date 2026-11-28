@@ -7,12 +7,14 @@ use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::form::{field, v_form};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectState};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tab::TabBar;
-use gpui_kit::component::{IndexPath, Sizable, WindowExt, h_flex, v_flex};
-use gpui_kit::{App, Context, Entity, SharedString, Window, prelude::*, px};
-use quaderno_core::{DeviceSettings, WifiStatus};
+use gpui_kit::component::{ActiveTheme, IndexPath, Sizable, WindowExt, h_flex, v_flex};
+use gpui_kit::{AnyElement, App, Context, Entity, SharedString, Window, div, prelude::*, px};
+use quaderno_core::DeviceSettings;
 
 use crate::app::QuadernoApp;
+use crate::wifi::WifiPanel;
 
 /// 選択肢。表示名と、端末に送る値を分けて持つ。
 #[derive(Clone)]
@@ -71,38 +73,48 @@ const TIMEZONES: [&str; 24] = [
     "Etc/GMT-11",
 ];
 
-impl QuadernoApp {
-    /// 接続中の端末の設定を読み込み、設定ダイアログを表示する。
-    pub fn open_device_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(client) = self.client() else { return };
-        self.run_task(
-            "端末の設定を読み込んでいます",
-            window,
-            cx,
-            move |_| Ok((client.settings()?, client.wifi_status())),
-            |this, result, window, cx| match result {
-                Ok((settings, wifi)) => {
-                    let wifi = match wifi {
-                        Ok(status) => Some(status),
-                        Err(e) => {
-                            this.notify_error("Wi-Fi の設定を読み込めませんでした", &e, window, cx);
-                            None
-                        }
-                    };
-                    this.show_device_settings(settings, wifi, window, cx);
-                }
-                Err(e) => this.notify_error("端末の設定を読み込めませんでした", &e, window, cx),
-            },
-        );
-    }
+/// バックグラウンドで読み込む値。
+#[derive(Clone)]
+pub(crate) enum Loading<T> {
+    Pending,
+    Failed,
+    Ready(T),
+}
 
-    fn show_device_settings(
-        &mut self,
-        current: DeviceSettings,
-        wifi: Option<WifiStatus>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+pub(crate) fn set_loaded<T: 'static>(entity: &Entity<Loading<T>>, value: Loading<T>, cx: &mut App) {
+    entity.update(cx, |v, cx| {
+        *v = value;
+        cx.notify();
+    });
+}
+
+/// 読み込み中の表示。
+pub(crate) fn loading_indicator(message: &'static str, cx: &App) -> AnyElement {
+    h_flex()
+        .gap_2()
+        .py_6()
+        .justify_center()
+        .child(Spinner::new())
+        .child(div().text_sm().text_color(cx.theme().muted_foreground).child(message))
+        .into_any_element()
+}
+
+pub(crate) fn load_failed(message: &'static str, cx: &App) -> AnyElement {
+    div().py_6().text_sm().text_color(cx.theme().muted_foreground).child(message).into_any_element()
+}
+
+/// 「一般」のタブの入力欄。
+#[derive(Clone)]
+struct GeneralForm {
+    current: DeviceSettings,
+    standby: ChoiceSelect,
+    date_format: ChoiceSelect,
+    time_format: ChoiceSelect,
+    timezone: ChoiceSelect,
+}
+
+impl GeneralForm {
+    fn new(current: DeviceSettings, window: &mut Window, cx: &mut App) -> Self {
         let standby = choice_select(
             STANDBY_MINUTES
                 .iter()
@@ -135,13 +147,92 @@ impl QuadernoApp {
             window,
             cx,
         );
+        Self { current, standby, date_format, time_format, timezone }
+    }
 
+    fn render(&self, view: &Entity<QuadernoApp>) -> AnyElement {
+        let sync_clock = {
+            let view = view.clone();
+            Button::new("sync-clock")
+                .label("端末の日時をこの PC に合わせる")
+                .small()
+                .outline()
+                .on_click(move |_, window, cx| view.update(cx, |this, cx| this.sync_device_clock(window, cx)))
+        };
+        v_form()
+            .child(field().label("スタンバイまでの時間").child(Select::new(&self.standby)))
+            .child(field().label("日付の形式").child(Select::new(&self.date_format)))
+            .child(field().label("時刻の形式").child(Select::new(&self.time_format)))
+            .child(field().label("タイムゾーン").child(Select::new(&self.timezone).menu_max_h(px(240.))))
+            .child(field().label("日時").child(h_flex().child(sync_clock)))
+            .into_any_element()
+    }
+
+    fn values(&self, cx: &App) -> DeviceSettings {
+        let selected = |select: &ChoiceSelect, fallback: &str| {
+            select.read(cx).selected_value().cloned().unwrap_or_else(|| fallback.to_string())
+        };
+        DeviceSettings {
+            timeout_to_standby: selected(&self.standby, &self.current.timeout_to_standby),
+            date_format: selected(&self.date_format, &self.current.date_format),
+            time_format: selected(&self.time_format, &self.current.time_format),
+            timezone: selected(&self.timezone, &self.current.timezone),
+        }
+    }
+}
+
+impl QuadernoApp {
+    /// 設定ダイアログを開き、接続中の端末の設定を読み込む。読み込むまではスピナーを表示する。
+    pub fn open_device_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(client) = self.client() else { return };
+        let general: Entity<Loading<GeneralForm>> = cx.new(|_| Loading::Pending);
         // Wi-Fi のタブの表示は、操作のたびに読み込み直した状態で更新する。
-        let wifi = cx.new(|_| wifi);
+        let wifi: WifiPanel = cx.new(|_| Loading::Pending);
+        let started = self.run_task(
+            "端末の設定を読み込んでいます",
+            window,
+            cx,
+            move |_| Ok((client.settings()?, client.wifi_status())),
+            {
+                let (general, wifi) = (general.clone(), wifi.clone());
+                move |this, result, window, cx| {
+                    let (form, status) = match result {
+                        Ok((settings, status)) => {
+                            let status = match status {
+                                Ok(status) => Loading::Ready(status),
+                                Err(e) => {
+                                    this.notify_error("Wi-Fi の設定を読み込めませんでした", &e, window, cx);
+                                    Loading::Failed
+                                }
+                            };
+                            (Loading::Ready(GeneralForm::new(settings, window, cx)), status)
+                        }
+                        Err(e) => {
+                            this.notify_error("端末の設定を読み込めませんでした", &e, window, cx);
+                            (Loading::Failed, Loading::Failed)
+                        }
+                    };
+                    set_loaded(&general, form, cx);
+                    set_loaded(&wifi, status, cx);
+                }
+            },
+        );
+        if started {
+            self.show_device_settings(general, wifi, window, cx);
+        }
+    }
+
+    fn show_device_settings(
+        &mut self,
+        general: Entity<Loading<GeneralForm>>,
+        wifi: WifiPanel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let tab = cx.new(|_| 0usize);
         let view = cx.entity();
         window.open_alert_dialog(cx, move |dialog, _, cx| {
-            let (view, current) = (view.clone(), current.clone());
+            let view = view.clone();
             let selected_tab = *tab.read(cx);
             let tabs = {
                 let tab = tab.clone();
@@ -157,26 +248,13 @@ impl QuadernoApp {
                     .child("一般")
                     .child("Wi-Fi")
             };
-            let (standby, date_format, time_format, timezone) =
-                (standby.clone(), date_format.clone(), time_format.clone(), timezone.clone());
-            let sync_clock = {
-                let view = view.clone();
-                Button::new("sync-clock")
-                    .label("端末の日時をこの PC に合わせる")
-                    .small()
-                    .outline()
-                    .on_click(move |_, window, cx| view.update(cx, |this, cx| this.sync_device_clock(window, cx)))
-            };
-            let form = v_form()
-                .child(field().label("スタンバイまでの時間").child(Select::new(&standby)))
-                .child(field().label("日付の形式").child(Select::new(&date_format)))
-                .child(field().label("時刻の形式").child(Select::new(&time_format)))
-                .child(field().label("タイムゾーン").child(Select::new(&timezone).menu_max_h(px(240.))))
-                .child(field().label("日時").child(h_flex().child(sync_clock)));
-            let content = match selected_tab {
-                0 => form.into_any_element(),
+            let content = match (selected_tab, general.read(cx)) {
+                (0, Loading::Pending) => loading_indicator("端末の設定を読み込んでいます", cx),
+                (0, Loading::Failed) => load_failed("端末の設定を読み込めませんでした", cx),
+                (0, Loading::Ready(form)) => form.render(&view),
                 _ => crate::wifi::wifi_tab(&view, &wifi, cx),
             };
+            let general = general.clone();
             dialog
                 .title("端末の設定")
                 .width(px(520.))
@@ -184,18 +262,11 @@ impl QuadernoApp {
                 .confirm()
                 .button_props(DialogButtonProps::default().ok_text("保存").cancel_text("キャンセル"))
                 .on_ok(move |_, window, cx| {
-                    let selected = |select: &ChoiceSelect, cx: &App, fallback: &str| {
-                        select.read(cx).selected_value().cloned().unwrap_or_else(|| fallback.to_string())
-                    };
-                    let new = DeviceSettings {
-                        timeout_to_standby: selected(&standby, cx, &current.timeout_to_standby),
-                        date_format: selected(&date_format, cx, &current.date_format),
-                        time_format: selected(&time_format, cx, &current.time_format),
-                        timezone: selected(&timezone, cx, &current.timezone),
-                    };
-                    let current = current.clone();
-                    view.update(cx, |this, cx| this.save_device_settings(current, new, window, cx));
-                    true
+                    // 読み込みが終わっていなければ、保存するものはない。
+                    let Loading::Ready(form) = general.read(cx) else { return true };
+                    let (current, new) = (form.current.clone(), form.values(cx));
+                    // 別の処理を実行中で保存できなければ、変更を残すためにダイアログを閉じない。
+                    view.update(cx, |this, cx| this.save_device_settings(current, new, window, cx))
                 })
         });
     }
@@ -206,11 +277,11 @@ impl QuadernoApp {
         new: DeviceSettings,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if current == new {
-            return;
+            return true;
         }
-        let Some(client) = self.client() else { return };
+        let Some(client) = self.client() else { return true };
         self.run_task(
             "端末の設定を保存しています",
             window,
@@ -220,7 +291,7 @@ impl QuadernoApp {
                 Ok(()) => this.notify_success("端末の設定を保存しました", window, cx),
                 Err(e) => this.notify_error("端末の設定を保存できませんでした", &e, window, cx),
             },
-        );
+        )
     }
 
     fn sync_device_clock(&mut self, window: &mut Window, cx: &mut Context<Self>) {

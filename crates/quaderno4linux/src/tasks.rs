@@ -55,7 +55,7 @@ impl TaskProgress {
 
 impl QuadernoApp {
     /// UI に処理中の表示を出しながら `work` をバックグラウンドスレッドで実行し、完了したら UI スレ
-    /// ッドで結果を渡して `done` を呼ぶ。
+    /// ッドで結果を渡して `done` を呼ぶ。別の処理を実行中で始められなかったときは `false` を返す。
     pub fn run_task<R: Send + 'static>(
         &mut self,
         label: impl Into<String>,
@@ -63,10 +63,10 @@ impl QuadernoApp {
         cx: &mut Context<Self>,
         work: impl FnOnce(TaskProgress) -> anyhow::Result<R> + Send + 'static,
         done: impl FnOnce(&mut Self, anyhow::Result<R>, &mut Window, &mut Context<Self>) + 'static,
-    ) {
+    ) -> bool {
         if self.busy.is_some() {
             self.notify_warning("別の処理を実行中です。完了までお待ちください", window, cx);
-            return;
+            return false;
         }
         let progress = TaskProgress::new(label);
         self.busy = Some(progress.clone());
@@ -103,5 +103,6 @@ impl QuadernoApp {
             });
         })
         .detach();
+        true
     }
 }
