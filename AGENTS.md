@@ -11,7 +11,7 @@ Rust と GPUI Kit で実装しています。機能や使い方は [README.md](R
   - `explorer.rs`: ファイル一覧と操作
   - `dialogs.rs`: ダイアログと通知
   - `settings.rs`: 端末の設定ダイアログ
-  - `wifi.rs`: 端末の Wi-Fi の設定ダイアログ
+  - `wifi.rs`: 端末の設定ダイアログの Wi-Fi のタブ
   - `tasks.rs`: バックグラウンド処理
 - `crates/quaderno-mock`: 開発とテスト用のモック端末。E2E テスト (`tests/end_to_end.rs`) もここにある
 - `packaging/linux`: udev ルールとデスクトップエントリ

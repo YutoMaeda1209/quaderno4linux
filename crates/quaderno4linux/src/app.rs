@@ -554,14 +554,6 @@ impl QuadernoApp {
                                 .outline()
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, window, cx| this.open_device_settings(window, cx))),
-                        )
-                        .child(
-                            Button::new("wifi-settings")
-                                .label("Wi-Fi")
-                                .small()
-                                .outline()
-                                .disabled(busy)
-                                .on_click(cx.listener(|this, _, window, cx| this.open_wifi_settings(window, cx))),
                         ),
                 ),
             Connection::Disconnected => {

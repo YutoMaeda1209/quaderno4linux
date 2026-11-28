@@ -4,7 +4,8 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, UNIX_EPOCH};
 
 use quaderno_core::{
-    CredentialStore, DeviceAddress, DeviceClient, DeviceSettings, ROOT_FOLDER_ID, Registration, no_progress,
+    CredentialStore, DeviceAddress, DeviceClient, DeviceSettings, EapConfig, ROOT_FOLDER_ID, Registration, WifiConfig,
+    no_progress,
 };
 use quaderno_mock::MockDevice;
 
@@ -109,15 +110,29 @@ fn pairing_and_file_operations() {
     let scanned = client.scan_wifi().unwrap();
     assert_eq!(scanned[0].ssid, "HomeWiFi");
     assert_eq!(scanned[0].frequency_band.as_deref(), Some("5ghz"));
-    assert!(client.add_wifi("自宅 Wi-Fi", "psk", "short").is_err());
-    client.add_wifi("自宅 Wi-Fi", "psk", "password1234").unwrap();
-    client.add_wifi("Cafe", "nonsec", "").unwrap();
+    let home = WifiConfig {
+        ssid: "自宅 Wi-Fi".into(),
+        security: "psk".into(),
+        password: "short".into(),
+        ..Default::default()
+    };
+    assert!(client.add_wifi(&home).is_err());
+    let home = WifiConfig { password: "password1234".into(), ..home };
+    client.add_wifi(&home).unwrap();
+    client.add_wifi(&WifiConfig { ssid: "Cafe".into(), security: "nonsec".into(), ..Default::default() }).unwrap();
     assert_eq!(device.wifi_networks()[0], ("自宅 Wi-Fi".into(), "psk".into(), "password1234".into()));
+    // 802.1X は ID などが必要。
+    let office =
+        WifiConfig { ssid: "Office".into(), security: "eap".into(), password: "secret".into(), ..Default::default() };
+    assert_eq!(client.add_wifi(&office).unwrap_err().status(), Some(400));
+    let eap =
+        EapConfig { method: "peap".into(), phase2: "mschapv2".into(), identity: "user".into(), ..Default::default() };
+    client.add_wifi(&WifiConfig { eap: Some(eap), ..office }).unwrap();
     let status = client.wifi_status().unwrap();
     assert_eq!(status.current.map(|n| n.ssid).as_deref(), Some("自宅 Wi-Fi"));
-    assert_eq!(status.saved.iter().map(|n| n.ssid.as_str()).collect::<Vec<_>>(), ["自宅 Wi-Fi", "Cafe"]);
+    assert_eq!(status.saved.iter().map(|n| n.ssid.as_str()).collect::<Vec<_>>(), ["自宅 Wi-Fi", "Cafe", "Office"]);
     client.delete_wifi(&status.saved[0]).unwrap();
-    assert_eq!(client.wifi_status().unwrap().saved.len(), 1);
+    assert_eq!(client.wifi_status().unwrap().saved.len(), 2);
     client.set_wifi_enabled(false).unwrap();
     let status = client.wifi_status().unwrap();
     assert!(!status.enabled && status.current.is_none());

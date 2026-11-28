@@ -516,17 +516,21 @@ fn api(
         }
         (Method::Put, ["system", "controls", "wifi_accesspoints", "register"]) => {
             let v = body_json()?;
-            let ssid = v["ssid"].as_str().and_then(|s| B64.decode(s).ok()).unwrap_or_default();
-            let passwd = v["passwd"].as_str().unwrap_or_default().len();
-            let valid = !ssid.is_empty()
-                && v["dhcp"] == "true"
-                && match v["security"].as_str() {
-                    Some("nonsec") => true,
-                    Some("psk") => (8..=63).contains(&passwd),
-                    _ => false,
-                };
-            if !valid {
-                return Ok(err(400, "40001", "invalid access point"));
+            let text = |key: &str| v[key].as_str().unwrap_or_default();
+            let ssid = B64.decode(text("ssid")).unwrap_or_default();
+            let required: &[&str] = match text("security") {
+                "nonsec" => &[],
+                "psk" if (8..=63).contains(&text("passwd").len()) => &[],
+                "psk" => return Ok(err(400, "40001", "Some parameters are required. Bad parameter : passwd")),
+                "eap" => &["eap", "eap_phase2", "eap_id", "passwd"],
+                _ => return Ok(err(400, "40005", "The value of a parameter is undefined. Bad parameter : security")),
+            };
+            let required = required.iter().chain(match text("dhcp") {
+                "false" => &["static_address", "network_mask"][..],
+                _ => &[],
+            });
+            if ssid.is_empty() || required.clone().any(|key| text(key).is_empty()) {
+                return Ok(err(400, "40001", "Some parameters are required."));
             }
             s.wifi_networks.retain(|n| n["ssid"] != v["ssid"] || n["security"] != v["security"]);
             s.wifi_networks.push(v);

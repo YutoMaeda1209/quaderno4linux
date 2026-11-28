@@ -7,15 +7,16 @@ use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::form::{field, v_form};
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectState};
-use gpui_kit::component::{IndexPath, Sizable, WindowExt, h_flex};
+use gpui_kit::component::tab::TabBar;
+use gpui_kit::component::{IndexPath, Sizable, WindowExt, h_flex, v_flex};
 use gpui_kit::{App, Context, Entity, SharedString, Window, prelude::*, px};
-use quaderno_core::DeviceSettings;
+use quaderno_core::{DeviceSettings, WifiStatus};
 
 use crate::app::QuadernoApp;
 
 /// 選択肢。表示名と、端末に送る値を分けて持つ。
 #[derive(Clone)]
-struct Choice {
+pub(crate) struct Choice {
     value: String,
     label: SharedString,
 }
@@ -38,7 +39,7 @@ impl SearchableListItem for Choice {
     }
 }
 
-type ChoiceSelect = Entity<SelectState<SearchableVec<Choice>>>;
+pub(crate) type ChoiceSelect = Entity<SelectState<SearchableVec<Choice>>>;
 
 /// 公式アプリ (Digital Paper App) が選択肢にしている値。
 const STANDBY_MINUTES: [&str; 4] = ["5", "10", "30", "60"];
@@ -78,15 +79,30 @@ impl QuadernoApp {
             "端末の設定を読み込んでいます",
             window,
             cx,
-            move |_| Ok(client.settings()?),
+            move |_| Ok((client.settings()?, client.wifi_status())),
             |this, result, window, cx| match result {
-                Ok(settings) => this.show_device_settings(settings, window, cx),
+                Ok((settings, wifi)) => {
+                    let wifi = match wifi {
+                        Ok(status) => Some(status),
+                        Err(e) => {
+                            this.notify_error("Wi-Fi の設定を読み込めませんでした", &e, window, cx);
+                            None
+                        }
+                    };
+                    this.show_device_settings(settings, wifi, window, cx);
+                }
                 Err(e) => this.notify_error("端末の設定を読み込めませんでした", &e, window, cx),
             },
         );
     }
 
-    fn show_device_settings(&mut self, current: DeviceSettings, window: &mut Window, cx: &mut Context<Self>) {
+    fn show_device_settings(
+        &mut self,
+        current: DeviceSettings,
+        wifi: Option<WifiStatus>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let standby = choice_select(
             STANDBY_MINUTES
                 .iter()
@@ -120,9 +136,27 @@ impl QuadernoApp {
             cx,
         );
 
+        // Wi-Fi のタブの表示は、操作のたびに読み込み直した状態で更新する。
+        let wifi = cx.new(|_| wifi);
+        let tab = cx.new(|_| 0usize);
         let view = cx.entity();
-        window.open_alert_dialog(cx, move |dialog, _, _| {
+        window.open_alert_dialog(cx, move |dialog, _, cx| {
             let (view, current) = (view.clone(), current.clone());
+            let selected_tab = *tab.read(cx);
+            let tabs = {
+                let tab = tab.clone();
+                TabBar::new("settings-tabs")
+                    .underline()
+                    .selected_index(selected_tab)
+                    .on_click(move |ix, _, cx| {
+                        tab.update(cx, |t, cx| {
+                            *t = *ix;
+                            cx.notify();
+                        })
+                    })
+                    .child("一般")
+                    .child("Wi-Fi")
+            };
             let (standby, date_format, time_format, timezone) =
                 (standby.clone(), date_format.clone(), time_format.clone(), timezone.clone());
             let sync_clock = {
@@ -139,10 +173,14 @@ impl QuadernoApp {
                 .child(field().label("時刻の形式").child(Select::new(&time_format)))
                 .child(field().label("タイムゾーン").child(Select::new(&timezone).menu_max_h(px(240.))))
                 .child(field().label("日時").child(h_flex().child(sync_clock)));
+            let content = match selected_tab {
+                0 => form.into_any_element(),
+                _ => crate::wifi::wifi_tab(&view, &wifi, cx),
+            };
             dialog
                 .title("端末の設定")
-                .width(px(480.))
-                .child(form)
+                .width(px(520.))
+                .child(v_flex().gap_4().child(tabs).child(content))
                 .confirm()
                 .button_props(DialogButtonProps::default().ok_text("保存").cancel_text("キャンセル"))
                 .on_ok(move |_, window, cx| {
@@ -200,12 +238,12 @@ impl QuadernoApp {
     }
 }
 
-fn choice(value: &str, label: impl Into<SharedString>) -> Choice {
+pub(crate) fn choice(value: &str, label: impl Into<SharedString>) -> Choice {
     Choice { value: value.to_string(), label: label.into() }
 }
 
 /// `current` を選んだ状態の選択欄。端末の値が選択肢になければ、その値も選択肢に加える。
-fn choice_select(
+pub(crate) fn choice_select(
     mut choices: Vec<Choice>,
     current: &str,
     searchable: bool,

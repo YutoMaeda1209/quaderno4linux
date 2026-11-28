@@ -20,8 +20,8 @@ use crate::credentials::Credentials;
 use crate::error::{Error, Result};
 use crate::http::{build_client, check, http_url, https_url};
 use crate::model::{
-    BatteryStatus, DeviceInfo, DeviceSettings, Entry, EntryList, ROOT_FOLDER_ID, StorageStatus, WifiNetwork,
-    WifiNetworkList, WifiStatus, format_utc,
+    BatteryStatus, DeviceInfo, DeviceSettings, Entry, EntryList, ROOT_FOLDER_ID, StorageStatus, WifiConfig,
+    WifiNetwork, WifiNetworkList, WifiStatus, format_utc,
 };
 
 /// 認証不要の端末情報 (`:8080/register/information`) を読み取る。
@@ -212,21 +212,9 @@ impl DeviceClient {
         Ok(resp.json::<WifiNetworkList>()?.aplist)
     }
 
-    /// ネットワークを登録する。端末は範囲内であれば登録したネットワークに接続し直す。IP アドレスは
-    /// DHCP で取得し、プロキシは使わない。
-    pub fn add_wifi(&self, ssid: &str, security: &str, password: &str) -> Result<()> {
-        let body = json!({
-            "ssid": B64.encode(ssid),
-            "security": security,
-            "passwd": password,
-            "dhcp": "true",
-            "static_address": "",
-            "gateway": "",
-            "network_mask": "",
-            "dns1": "",
-            "dns2": "",
-            "proxy": "false",
-        });
+    /// ネットワークを登録する。端末は範囲内であれば登録したネットワークに接続し直す。
+    pub fn add_wifi(&self, config: &WifiConfig) -> Result<()> {
+        let body = config.to_json();
         // 端末と Wi-Fi で接続していると、端末がネットワークを切り替えるため応答が返らない。
         self.send(Method::PUT, "/system/controls/wifi_accesspoints/register", |r| {
             Ok(r.json(&body).timeout(Duration::from_secs(20)))
