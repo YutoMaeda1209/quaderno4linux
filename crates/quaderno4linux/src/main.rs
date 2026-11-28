@@ -5,7 +5,6 @@ mod dialogs;
 mod explorer;
 mod settings;
 mod tasks;
-mod wifi;
 
 use std::fs::File;
 use std::io::Write;

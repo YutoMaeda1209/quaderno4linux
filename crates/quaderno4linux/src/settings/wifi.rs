@@ -1,4 +1,4 @@
-//! 端末の設定ダイアログの Wi-Fi のタブと、ネットワークを追加するダイアログ。
+//! 端末の設定ダイアログの「Wi-Fi」のタブと、ネットワークを追加するダイアログ。
 
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
@@ -15,11 +15,11 @@ use gpui_kit::component::{ActiveTheme, Disableable, Sizable, WindowExt, h_flex, 
 use gpui_kit::{AnyElement, App, Context, Entity, SharedString, Window, div, prelude::*, px};
 use quaderno_core::{EapConfig, Error, Proxy, StaticIp, WifiConfig, WifiNetwork, WifiStatus};
 
+use super::{ChoiceSelect, Loading, choice, choice_select, load_failed, loading_indicator, set_loaded};
 use crate::app::QuadernoApp;
-use crate::settings::{ChoiceSelect, Loading, choice, choice_select, load_failed, loading_indicator, set_loaded};
 
 /// Wi-Fi のタブに表示する状態。
-pub(crate) type WifiPanel = Entity<Loading<WifiStatus>>;
+pub(super) type WifiPanel = Entity<Loading<WifiStatus>>;
 
 /// 検索で見つかったネットワークの選択肢。値は検索結果での位置。
 #[derive(Clone)]
@@ -46,7 +46,7 @@ type NetworkSelect = Entity<SelectState<SearchableVec<NetworkChoice>>>;
 const EAP_PHASE2: [(&str, &str); 4] = [("mschapv2", "MSCHAPv2"), ("gtc", "GTC"), ("mschap", "MSCHAP"), ("pap", "PAP")];
 
 /// Wi-Fi のタブ。操作はその場で端末に反映し、ダイアログの「保存」とは関係しない。
-pub(crate) fn wifi_tab(view: &Entity<QuadernoApp>, panel: &WifiPanel, cx: &App) -> AnyElement {
+pub(super) fn wifi_tab(view: &Entity<QuadernoApp>, panel: &WifiPanel, cx: &App) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let note = div().text_xs().text_color(muted).child("Wi-Fi の設定は、操作するとすぐに端末に反映されます。");
     let status = match panel.read(cx) {
