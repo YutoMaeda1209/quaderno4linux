@@ -683,8 +683,17 @@ impl QuadernoApp {
             .h_full()
             .child(self.render_toolbar(cx))
             .child(self.render_breadcrumb(cx))
-            .child(v_flex().flex_1().min_h_0().child(body))
-            .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(theme.drop_target))
+            .child(
+                // 表は自身の背景で塗られるため、ドロップ先の強調は半透明の層を上に重ねて表示する。
+                // 層はマウス操作を遮らない。
+                v_flex().flex_1().min_h_0().relative().child(body).child(
+                    div()
+                        .id("drop-target")
+                        .absolute()
+                        .inset_0()
+                        .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(theme.drop_target)),
+                ),
+            )
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 this.upload_paths(paths.paths().to_vec(), window, cx);
             }))
