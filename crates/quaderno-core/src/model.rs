@@ -134,6 +134,124 @@ impl DeviceSettings {
     }
 }
 
+/// Wi-Fi のネットワーク。保存済みのネットワーク、検索で見つかったネットワーク、接続状態のどれにも
+/// 使う。端末は SSID を Base64 で返すが、ここでは復号した文字列で持つ。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct WifiNetwork {
+    #[serde(default, deserialize_with = "base64_ssid")]
+    pub ssid: String,
+    /// `nonsec` (なし)、`psk` (WPA/WPA2 パーソナル)、`eap` (802.1X)。
+    #[serde(default)]
+    pub security: String,
+    /// `2.4ghz` または `5ghz` (検索結果と接続状態だけ)。
+    #[serde(default)]
+    pub frequency_band: Option<String>,
+    /// `connected`、`connecting`、`disabled`、`none` など (接続状態だけ)。
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WifiNetworkList {
+    #[serde(default)]
+    pub aplist: Vec<WifiNetwork>,
+}
+
+/// SSID を Base64 として復号する。Base64 でなければそのまま使う。
+fn base64_ssid<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    use base64::Engine;
+    let raw = String::deserialize(d)?;
+    Ok(base64::engine::general_purpose::STANDARD
+        .decode(&raw)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or(raw))
+}
+
+/// 登録するネットワークの設定 (`/system/controls/wifi_accesspoints/register`)。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WifiConfig {
+    pub ssid: String,
+    /// `nonsec`、`psk`、`eap`。
+    pub security: String,
+    /// PSK のパスフレーズ、または 802.1X のパスワード。
+    pub password: String,
+    /// 固定 IP アドレス。`None` なら DHCP で取得する。
+    pub static_ip: Option<StaticIp>,
+    pub proxy: Option<Proxy>,
+    /// 802.1X の設定 (`security` が `eap` のときだけ)。
+    pub eap: Option<EapConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StaticIp {
+    pub address: String,
+    /// プレフィックス長 (`24` など)。
+    pub prefix_len: u8,
+    pub gateway: String,
+    pub dns1: String,
+    pub dns2: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Proxy {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EapConfig {
+    /// EAP の方式 (`peap`)。
+    pub method: String,
+    /// 内部認証 (`mschapv2` など)。
+    pub phase2: String,
+    pub identity: String,
+    pub anonymous_identity: String,
+}
+
+impl WifiConfig {
+    /// 登録の API に送る JSON。SSID は Base64 にし、値はすべて文字列で送る。
+    pub fn to_json(&self) -> serde_json::Value {
+        use base64::Engine;
+        let ip = self.static_ip.clone().unwrap_or_default();
+        let mut body = serde_json::json!({
+            "ssid": base64::engine::general_purpose::STANDARD.encode(&self.ssid),
+            "security": self.security,
+            "passwd": self.password,
+            "dhcp": self.static_ip.is_none().to_string(),
+            "static_address": ip.address,
+            "network_mask": if self.static_ip.is_some() { ip.prefix_len.to_string() } else { String::new() },
+            "gateway": ip.gateway,
+            "dns1": ip.dns1,
+            "dns2": ip.dns2,
+            "proxy": self.proxy.is_some().to_string(),
+        });
+        if let Some(proxy) = &self.proxy {
+            body["proxy_host"] = proxy.host.clone().into();
+            body["proxy_port"] = proxy.port.to_string().into();
+        }
+        if let Some(eap) = &self.eap {
+            body["eap"] = eap.method.clone().into();
+            body["eap_phase2"] = eap.phase2.clone().into();
+            body["eap_id"] = eap.identity.clone().into();
+            body["eap_anid"] = eap.anonymous_identity.clone().into();
+            // 証明書の項目に何を入れるかは分かっていないので、端末で保存したときと同じく空にする。
+            body["eap_cacert"] = "".into();
+            body["eap_cert"] = "".into();
+        }
+        body
+    }
+}
+
+/// 端末の Wi-Fi の状態。
+#[derive(Clone, Debug, Default)]
+pub struct WifiStatus {
+    pub enabled: bool,
+    /// 接続中 (または接続しようとしている) のネットワーク。
+    pub current: Option<WifiNetwork>,
+    pub saved: Vec<WifiNetwork>,
+}
+
 fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(match v {
@@ -207,6 +325,45 @@ mod tests {
         assert_eq!(format_date("2024-01-02T03:04:05Z"), "2024-01-02 03:04");
         assert_eq!(format_utc(UNIX_EPOCH), "1970-01-01T00:00:00Z");
         assert_eq!(format_utc(UNIX_EPOCH + Duration::from_secs(1_709_208_245)), "2024-02-29T12:04:05Z");
+    }
+
+    #[test]
+    fn wifi_ssid() {
+        let list: WifiNetworkList = serde_json::from_str(
+            r#"{"aplist": [{"ssid": "44GC44GE44GG", "security": "psk"}, {"ssid": "plain", "security": "nonsec"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(list.aplist[0].ssid, "あいう");
+        assert_eq!(list.aplist[1].ssid, "plain");
+    }
+
+    #[test]
+    fn wifi_config_json() {
+        let psk =
+            WifiConfig {
+                ssid: "あいう".into(), security: "psk".into(), password: "pw".into(), ..Default::default()
+            };
+        assert_eq!(
+            psk.to_json(),
+            serde_json::json!({
+                "ssid": "44GC44GE44GG", "security": "psk", "passwd": "pw", "dhcp": "true", "static_address": "",
+                "network_mask": "", "gateway": "", "dns1": "", "dns2": "", "proxy": "false",
+            })
+        );
+        let eap = WifiConfig {
+            security: "eap".into(),
+            static_ip: Some(StaticIp { address: "192.168.0.10".into(), prefix_len: 24, ..Default::default() }),
+            proxy: Some(Proxy { host: "proxy.example".into(), port: 8080 }),
+            eap: Some(EapConfig { method: "peap".into(), phase2: "mschapv2".into(), ..Default::default() }),
+            ..psk
+        };
+        let json = eap.to_json();
+        assert_eq!(json["dhcp"], "false");
+        assert_eq!(json["network_mask"], "24");
+        assert_eq!(json["proxy"], "true");
+        assert_eq!(json["proxy_port"], "8080");
+        assert_eq!(json["eap_phase2"], "mschapv2");
+        assert_eq!(json["eap_cert"], "");
     }
 
     #[test]

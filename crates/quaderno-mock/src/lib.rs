@@ -71,6 +71,8 @@ struct State {
     next_id: u64,
     /// `/system/configs/{key}` の値。
     configs: HashMap<String, String>,
+    /// 登録された Wi-Fi のネットワーク (登録時の JSON。SSID は Base64)。
+    wifi_networks: Vec<Value>,
 }
 
 /// 実行中のモック端末のハンドル。
@@ -98,10 +100,12 @@ impl MockDevice {
                 ("date_format", "yyyy/M/d"),
                 ("time_format", "24hour"),
                 ("timezone", "Asia/Tokyo"),
+                ("wifi", "on"),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
+            wifi_networks: Vec::new(),
         }));
 
         let cert = rcgen::generate_simple_self_signed(vec!["quaderno.device".into()])?;
@@ -154,6 +158,18 @@ impl MockDevice {
     /// `/system/configs/{key}` の値 (アサーション用)。`datetime` は書き込まれた値を返す。
     pub fn config(&self, key: &str) -> Option<String> {
         self.state.lock().unwrap().configs.get(key).cloned()
+    }
+
+    /// 登録された Wi-Fi のネットワークの `(SSID, セキュリティ, パスワード)` (アサーション用)。
+    pub fn wifi_networks(&self) -> Vec<(String, String, String)> {
+        let field = |v: &Value, key: &str| v[key].as_str().unwrap_or_default().to_string();
+        self.state
+            .lock()
+            .unwrap()
+            .wifi_networks
+            .iter()
+            .map(|v| (decode_ssid(&field(v, "ssid")), field(v, "security"), field(v, "passwd")))
+            .collect()
     }
 
     /// すべてのフォルダのパス (アサーション用)。
@@ -471,6 +487,64 @@ fn api(
             json_resp(200, json!({ "capacity": "15000000000", "available": "12345678901" }))
         }
         (Method::Get, ["system", "status", "firmware_version"]) => json_resp(200, json!({ "value": "2.2.09.11030FP" })),
+        (_, ["system", "status", "wifi_state"] | ["system", "configs" | "controls", "wifi_accesspoints", ..])
+            if s.configs["wifi"] == "off" =>
+        {
+            err(403, "40304", "Rejected because Wi-Fi is off.")
+        }
+        (Method::Get, ["system", "status", "wifi_state"]) => {
+            let state = match s.wifi_networks.first() {
+                // 最初に登録したネットワークに接続していることにする。
+                Some(n) => json!({ "ssid": n["ssid"], "security": n["security"], "state": "connected" }),
+                None => json!({ "state": "none" }),
+            };
+            json_resp(200, state)
+        }
+        (Method::Get, ["system", "configs", "wifi_accesspoints"]) => {
+            let aplist: Vec<Value> =
+                s.wifi_networks.iter().map(|n| json!({ "ssid": n["ssid"], "security": n["security"] })).collect();
+            json_resp(200, json!({ "aplist": aplist }))
+        }
+        (Method::Post, ["system", "controls", "wifi_accesspoints", "scan"]) => {
+            let aplist: Vec<Value> = [("HomeWiFi", "psk", "5ghz"), ("Cafe", "nonsec", "2.4ghz"), ("Office", "eap", "5ghz")]
+                .into_iter()
+                .map(|(ssid, security, band)| {
+                    json!({ "ssid": B64.encode(ssid), "security": security, "frequency_band": band, "rssi_level": "3" })
+                })
+                .collect();
+            json_resp(200, json!({ "aplist": aplist }))
+        }
+        (Method::Put, ["system", "controls", "wifi_accesspoints", "register"]) => {
+            let v = body_json()?;
+            let text = |key: &str| v[key].as_str().unwrap_or_default();
+            let ssid = B64.decode(text("ssid")).unwrap_or_default();
+            let required: &[&str] = match text("security") {
+                "nonsec" => &[],
+                "psk" if (8..=63).contains(&text("passwd").len()) => &[],
+                "psk" => return Ok(err(400, "40001", "Some parameters are required. Bad parameter : passwd")),
+                "eap" => &["eap", "eap_phase2", "eap_id", "passwd"],
+                _ => return Ok(err(400, "40005", "The value of a parameter is undefined. Bad parameter : security")),
+            };
+            let required = required.iter().chain(match text("dhcp") {
+                "false" => &["static_address", "network_mask"][..],
+                _ => &[],
+            });
+            if ssid.is_empty() || required.clone().any(|key| text(key).is_empty()) {
+                return Ok(err(400, "40001", "Some parameters are required."));
+            }
+            s.wifi_networks.retain(|n| n["ssid"] != v["ssid"] || n["security"] != v["security"]);
+            s.wifi_networks.push(v);
+            no_content()
+        }
+        (Method::Delete, ["system", "configs", "wifi_accesspoints", ssid, security]) => {
+            let before = s.wifi_networks.len();
+            s.wifi_networks
+                .retain(|n| decode_ssid(n["ssid"].as_str().unwrap_or_default()) != *ssid || n["security"] != *security);
+            if s.wifi_networks.len() == before {
+                return Ok(err(404, "40401", "not found"));
+            }
+            no_content()
+        }
         (Method::Get, ["system", "configs", key]) => match s.configs.get(*key) {
             // `datetime` は書き込み専用。
             Some(v) if *key != "datetime" => json_resp(200, json!({ "value": v })),
@@ -483,6 +557,7 @@ fn api(
                 "time_format" => matches!(value.as_str(), "12hour" | "24hour"),
                 "timeout_to_standby" => value == "never" || value.parse::<u32>().is_ok(),
                 "datetime" => true,
+                "wifi" => matches!(value.as_str(), "on" | "off"),
                 _ => s.configs.contains_key(*key),
             };
             if !valid {
@@ -611,6 +686,10 @@ fn api(
         }
         _ => err(404, "40401", "not found"),
     })
+}
+
+fn decode_ssid(ssid: &str) -> String {
+    B64.decode(ssid).ok().and_then(|b| String::from_utf8(b).ok()).unwrap_or_default()
 }
 
 fn parse_multipart(content_type: &str, body: &[u8]) -> Option<Vec<u8>> {
