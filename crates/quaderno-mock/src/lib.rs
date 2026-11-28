@@ -487,12 +487,16 @@ fn api(
             json_resp(200, json!({ "capacity": "15000000000", "available": "12345678901" }))
         }
         (Method::Get, ["system", "status", "firmware_version"]) => json_resp(200, json!({ "value": "2.2.09.11030FP" })),
+        (_, ["system", "status", "wifi_state"] | ["system", "configs" | "controls", "wifi_accesspoints", ..])
+            if s.configs["wifi"] == "off" =>
+        {
+            err(403, "40304", "Rejected because Wi-Fi is off.")
+        }
         (Method::Get, ["system", "status", "wifi_state"]) => {
-            let state = match (s.configs["wifi"].as_str(), s.wifi_networks.first()) {
-                ("off", _) => json!({ "state": "disabled" }),
+            let state = match s.wifi_networks.first() {
                 // 最初に登録したネットワークに接続していることにする。
-                (_, Some(n)) => json!({ "ssid": n["ssid"], "security": n["security"], "state": "connected" }),
-                (_, None) => json!({ "state": "none" }),
+                Some(n) => json!({ "ssid": n["ssid"], "security": n["security"], "state": "connected" }),
+                None => json!({ "state": "none" }),
             };
             json_resp(200, state)
         }
@@ -502,9 +506,6 @@ fn api(
             json_resp(200, json!({ "aplist": aplist }))
         }
         (Method::Post, ["system", "controls", "wifi_accesspoints", "scan"]) => {
-            if s.configs["wifi"] == "off" {
-                return Ok(err(400, "40001", "wifi is off"));
-            }
             let aplist: Vec<Value> = [("HomeWiFi", "psk", "5ghz"), ("Cafe", "nonsec", "2.4ghz"), ("Office", "eap", "5ghz")]
                 .into_iter()
                 .map(|(ssid, security, band)| {

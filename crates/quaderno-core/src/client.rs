@@ -190,15 +190,14 @@ impl DeviceClient {
     // ----- Wi-Fi --------------------------------------------------------
 
     pub fn wifi_status(&self) -> Result<WifiStatus> {
-        let enabled = self.config("wifi")? == "on";
-        let current = if enabled {
-            let state: WifiNetwork = self.get_json("/system/status/wifi_state")?;
-            matches!(state.state.as_deref(), Some("connected" | "connecting")).then_some(state)
-        } else {
-            None
-        };
+        // Wi-Fi がオフの間、端末は Wi-Fi の API に `403 40304` を返す。
+        if self.config("wifi")? != "on" {
+            return Ok(WifiStatus::default());
+        }
+        let state: WifiNetwork = self.get_json("/system/status/wifi_state")?;
+        let current = matches!(state.state.as_deref(), Some("connected" | "connecting")).then_some(state);
         let saved = self.get_json::<WifiNetworkList>("/system/configs/wifi_accesspoints")?.aplist;
-        Ok(WifiStatus { enabled, current, saved })
+        Ok(WifiStatus { enabled: true, current, saved })
     }
 
     pub fn set_wifi_enabled(&self, enabled: bool) -> Result<()> {
@@ -213,19 +212,25 @@ impl DeviceClient {
         Ok(resp.json::<WifiNetworkList>()?.aplist)
     }
 
-    /// ネットワークを登録する。端末は登録したネットワークに接続しようとする。IP アドレスは DHCP で
-    /// 取得し、プロキシは使わない。
+    /// ネットワークを登録する。端末は範囲内であれば登録したネットワークに接続し直す。IP アドレスは
+    /// DHCP で取得し、プロキシは使わない。
     pub fn add_wifi(&self, ssid: &str, security: &str, password: &str) -> Result<()> {
-        let mut body = json!({
+        let body = json!({
             "ssid": B64.encode(ssid),
             "security": security,
+            "passwd": password,
             "dhcp": "true",
+            "static_address": "",
+            "gateway": "",
+            "network_mask": "",
+            "dns1": "",
+            "dns2": "",
             "proxy": "false",
         });
-        if !password.is_empty() {
-            body["passwd"] = json!(password);
-        }
-        self.send_json(Method::PUT, "/system/controls/wifi_accesspoints/register", body)?;
+        // 端末と Wi-Fi で接続していると、端末がネットワークを切り替えるため応答が返らない。
+        self.send(Method::PUT, "/system/controls/wifi_accesspoints/register", |r| {
+            Ok(r.json(&body).timeout(Duration::from_secs(20)))
+        })?;
         Ok(())
     }
 

@@ -9,7 +9,7 @@ use gpui_kit::component::select::{Select, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Disableable, IndexPath, Sizable, WindowExt, h_flex, v_flex};
 use gpui_kit::{Context, Entity, SharedString, Window, div, prelude::*, px};
-use quaderno_core::{WifiNetwork, WifiStatus};
+use quaderno_core::{Error, WifiNetwork, WifiStatus};
 
 use crate::app::QuadernoApp;
 
@@ -87,7 +87,9 @@ impl QuadernoApp {
                         },
                     ))
             });
-            let saved = if status.saved.is_empty() {
+            let saved = if !status.enabled {
+                div().text_sm().text_color(muted).child("Wi-Fi をオンにすると表示されます").into_any_element()
+            } else if status.saved.is_empty() {
                 div().text_sm().text_color(muted).child("保存済みのネットワークはありません").into_any_element()
             } else {
                 v_flex().id("wifi-saved").gap_2().max_h(px(200.)).overflow_y_scroll().children(rows).into_any_element()
@@ -264,7 +266,9 @@ impl QuadernoApp {
                 v_form().child(field().label("ネットワーク").child(Select::new(&select).menu_max_h(px(240.)))).child(
                     field()
                         .label("パスワード")
-                        .description("IP アドレスは DHCP で自動的に取得します。")
+                        .description(
+                            "IP アドレスは DHCP で自動的に取得します。端末と Wi-Fi で接続している場合は、端末が追加したネットワークに切り替えるため、接続が切れることがあります。",
+                        )
                         .child(Input::new(&password).mask_toggle().disabled(!needs_password)),
                 );
             dialog
@@ -311,14 +315,25 @@ impl QuadernoApp {
             window,
             cx,
             move |_| {
-                client.add_wifi(&network.ssid, &network.security, &password)?;
-                Ok((network.ssid, client.wifi_status()?))
+                match client.add_wifi(&network.ssid, &network.security, &password) {
+                    // 応答がないまま通信が途切れた。端末がネットワークを切り替えた可能性がある。
+                    Err(Error::Http(e)) if e.status().is_none() => return Ok((network.ssid, None)),
+                    result => result?,
+                }
+                Ok((network.ssid, Some(client.wifi_status()?)))
             },
             move |this, result, window, cx| match result {
-                Ok((ssid, status)) => {
+                Ok((ssid, Some(status))) => {
                     update_panel(&panel, status, cx);
                     this.notify_success(format!("{ssid} を追加しました"), window, cx);
                 }
+                Ok((ssid, None)) => this.notify_warning(
+                    format!(
+                        "{ssid} の追加中に端末との通信が途切れました。端末がネットワークを切り替えた可能性があります"
+                    ),
+                    window,
+                    cx,
+                ),
                 Err(e) => this.notify_error("ネットワークを追加できませんでした", &e, window, cx),
             },
         );
