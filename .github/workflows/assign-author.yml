@@ -7,6 +7,7 @@ on:
     types: [opened]
 
 permissions:
+  issues: write
   pull-requests: write
 
 jobs:
@@ -15,9 +16,31 @@ jobs:
     runs-on: ubuntu-24.04
     # Bot (Dependabot など) は Assignees に追加できない。
     if: github.event.pull_request.user.type != 'Bot'
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.pull_request.number }}
+      AUTHOR: ${{ github.event.pull_request.user.login }}
     steps:
-      - run: gh api "repos/$GITHUB_REPOSITORY/issues/$PR/assignees" -f "assignees[]=$AUTHOR"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
+      - name: Assign the author to the PR
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/$PR/assignees" -f "assignees[]=$AUTHOR"
+      # PR で閉じる Issue のうち、まだ誰も割り当てられていないものに作成者を割り当てる。
+      - name: Assign the author to unassigned linked issues
+        run: |
+          issues=$(gh api graphql \
+            -F owner="${GITHUB_REPOSITORY%/*}" -F repo="${GITHUB_REPOSITORY#*/}" -F pr="$PR" \
+            -f query='
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    closingIssuesReferences(first: 10) {
+                      nodes { number repository { nameWithOwner } assignees { totalCount } }
+                    }
+                  }
+                }
+              }' \
+            --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[]
+              | select(.repository.nameWithOwner == $ENV.GITHUB_REPOSITORY and .assignees.totalCount == 0)
+              | .number')
+          for issue in $issues; do
+            gh api "repos/$GITHUB_REPOSITORY/issues/$issue/assignees" -f "assignees[]=$AUTHOR"
+          done
