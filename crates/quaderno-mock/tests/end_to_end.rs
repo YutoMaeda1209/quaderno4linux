@@ -102,6 +102,27 @@ fn pairing_and_file_operations() {
     client.set_datetime(UNIX_EPOCH + Duration::from_secs(86_400)).unwrap();
     assert_eq!(device.config("datetime").as_deref(), Some("1970-01-02T00:00:00Z"));
 
+    // Wi-Fi。SSID は Base64 でやり取りし、削除のパスではそのままの文字列を使う。
+    let status = client.wifi_status().unwrap();
+    assert!(status.enabled && status.current.is_none() && status.saved.is_empty());
+    let scanned = client.scan_wifi().unwrap();
+    assert_eq!(scanned[0].ssid, "HomeWiFi");
+    assert_eq!(scanned[0].frequency_band.as_deref(), Some("5ghz"));
+    assert!(client.add_wifi("自宅 Wi-Fi", "psk", "short").is_err());
+    client.add_wifi("自宅 Wi-Fi", "psk", "password1234").unwrap();
+    client.add_wifi("Cafe", "nonsec", "").unwrap();
+    assert_eq!(device.wifi_networks()[0], ("自宅 Wi-Fi".into(), "psk".into(), "password1234".into()));
+    let status = client.wifi_status().unwrap();
+    assert_eq!(status.current.map(|n| n.ssid).as_deref(), Some("自宅 Wi-Fi"));
+    assert_eq!(status.saved.iter().map(|n| n.ssid.as_str()).collect::<Vec<_>>(), ["自宅 Wi-Fi", "Cafe"]);
+    client.delete_wifi(&status.saved[0]).unwrap();
+    assert_eq!(client.wifi_status().unwrap().saved.len(), 1);
+    client.set_wifi_enabled(false).unwrap();
+    let status = client.wifi_status().unwrap();
+    assert!(!status.enabled && status.current.is_none());
+    assert!(client.scan_wifi().is_err());
+    client.set_wifi_enabled(true).unwrap();
+
     // 保存した認証情報で再び認証できる。
     let creds = store.load().unwrap().unwrap();
     DeviceClient::connect(addr, creds).unwrap().ping().unwrap();

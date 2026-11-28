@@ -134,6 +134,49 @@ impl DeviceSettings {
     }
 }
 
+/// Wi-Fi のネットワーク。保存済みのネットワーク、検索で見つかったネットワーク、接続状態のどれにも
+/// 使う。端末は SSID を Base64 で返すが、ここでは復号した文字列で持つ。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct WifiNetwork {
+    #[serde(default, deserialize_with = "base64_ssid")]
+    pub ssid: String,
+    /// `nonsec` (なし)、`psk` (WPA/WPA2 パーソナル)、`eap` (802.1X)。
+    #[serde(default)]
+    pub security: String,
+    /// `2.4ghz` または `5ghz` (検索結果と接続状態だけ)。
+    #[serde(default)]
+    pub frequency_band: Option<String>,
+    /// `connected`、`connecting`、`disabled`、`none` など (接続状態だけ)。
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WifiNetworkList {
+    #[serde(default)]
+    pub aplist: Vec<WifiNetwork>,
+}
+
+/// SSID を Base64 として復号する。Base64 でなければそのまま使う。
+fn base64_ssid<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    use base64::Engine;
+    let raw = String::deserialize(d)?;
+    Ok(base64::engine::general_purpose::STANDARD
+        .decode(&raw)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or(raw))
+}
+
+/// 端末の Wi-Fi の状態。
+#[derive(Clone, Debug, Default)]
+pub struct WifiStatus {
+    pub enabled: bool,
+    /// 接続中 (または接続しようとしている) のネットワーク。
+    pub current: Option<WifiNetwork>,
+    pub saved: Vec<WifiNetwork>,
+}
+
 fn lenient_u64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(match v {
@@ -207,6 +250,16 @@ mod tests {
         assert_eq!(format_date("2024-01-02T03:04:05Z"), "2024-01-02 03:04");
         assert_eq!(format_utc(UNIX_EPOCH), "1970-01-01T00:00:00Z");
         assert_eq!(format_utc(UNIX_EPOCH + Duration::from_secs(1_709_208_245)), "2024-02-29T12:04:05Z");
+    }
+
+    #[test]
+    fn wifi_ssid() {
+        let list: WifiNetworkList = serde_json::from_str(
+            r#"{"aplist": [{"ssid": "44GC44GE44GG", "security": "psk"}, {"ssid": "plain", "security": "nonsec"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(list.aplist[0].ssid, "あいう");
+        assert_eq!(list.aplist[1].ssid, "plain");
     }
 
     #[test]

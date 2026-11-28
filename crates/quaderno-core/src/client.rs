@@ -20,7 +20,8 @@ use crate::credentials::Credentials;
 use crate::error::{Error, Result};
 use crate::http::{build_client, check, http_url, https_url};
 use crate::model::{
-    BatteryStatus, DeviceInfo, DeviceSettings, Entry, EntryList, ROOT_FOLDER_ID, StorageStatus, format_utc,
+    BatteryStatus, DeviceInfo, DeviceSettings, Entry, EntryList, ROOT_FOLDER_ID, StorageStatus, WifiNetwork,
+    WifiNetworkList, WifiStatus, format_utc,
 };
 
 /// 認証不要の端末情報 (`:8080/register/information`) を読み取る。
@@ -184,6 +185,59 @@ impl DeviceClient {
     /// 端末の時計を `time` に合わせる。
     pub fn set_datetime(&self, time: SystemTime) -> Result<()> {
         self.set_config("datetime", &format_utc(time))
+    }
+
+    // ----- Wi-Fi --------------------------------------------------------
+
+    pub fn wifi_status(&self) -> Result<WifiStatus> {
+        let enabled = self.config("wifi")? == "on";
+        let current = if enabled {
+            let state: WifiNetwork = self.get_json("/system/status/wifi_state")?;
+            matches!(state.state.as_deref(), Some("connected" | "connecting")).then_some(state)
+        } else {
+            None
+        };
+        let saved = self.get_json::<WifiNetworkList>("/system/configs/wifi_accesspoints")?.aplist;
+        Ok(WifiStatus { enabled, current, saved })
+    }
+
+    pub fn set_wifi_enabled(&self, enabled: bool) -> Result<()> {
+        self.set_config("wifi", if enabled { "on" } else { "off" })
+    }
+
+    /// 周囲のネットワークを探す。
+    pub fn scan_wifi(&self) -> Result<Vec<WifiNetwork>> {
+        let resp = self.send(Method::POST, "/system/controls/wifi_accesspoints/scan", |r| {
+            Ok(r.timeout(Duration::from_secs(60)))
+        })?;
+        Ok(resp.json::<WifiNetworkList>()?.aplist)
+    }
+
+    /// ネットワークを登録する。端末は登録したネットワークに接続しようとする。IP アドレスは DHCP で
+    /// 取得し、プロキシは使わない。
+    pub fn add_wifi(&self, ssid: &str, security: &str, password: &str) -> Result<()> {
+        let mut body = json!({
+            "ssid": B64.encode(ssid),
+            "security": security,
+            "dhcp": "true",
+            "proxy": "false",
+        });
+        if !password.is_empty() {
+            body["passwd"] = json!(password);
+        }
+        self.send_json(Method::PUT, "/system/controls/wifi_accesspoints/register", body)?;
+        Ok(())
+    }
+
+    /// 保存済みのネットワークを削除する。パスの SSID は Base64 ではなく、そのままの文字列を使う。
+    pub fn delete_wifi(&self, network: &WifiNetwork) -> Result<()> {
+        let path = format!(
+            "/system/configs/wifi_accesspoints/{}/{}",
+            urlencoding::encode(&network.ssid),
+            urlencoding::encode(&network.security)
+        );
+        self.send(Method::DELETE, &path, |r| Ok(r.timeout(Duration::from_secs(30))))?;
+        Ok(())
     }
 
     // ----- 閲覧 ---------------------------------------------------------
