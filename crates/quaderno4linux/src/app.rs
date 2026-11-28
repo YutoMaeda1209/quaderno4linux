@@ -537,12 +537,24 @@ impl QuadernoApp {
                 .child(div().text_sm().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(name.clone()))
                 .child(div().text_xs().text_color(theme.muted_foreground).child(status.clone()))
                 .child(
-                    Button::new("disconnect")
-                        .label("切断")
-                        .small()
-                        .outline()
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx))),
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("disconnect")
+                                .label("切断")
+                                .small()
+                                .outline()
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx))),
+                        )
+                        .child(
+                            Button::new("device-settings")
+                                .label("端末の設定")
+                                .small()
+                                .outline()
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, window, cx| this.open_device_settings(window, cx))),
+                        ),
                 ),
             Connection::Disconnected => {
                 v_flex().child(div().text_sm().text_color(theme.muted_foreground).child("未接続"))
