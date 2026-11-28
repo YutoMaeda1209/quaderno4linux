@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -19,7 +19,9 @@ use crate::address::DeviceAddress;
 use crate::credentials::Credentials;
 use crate::error::{Error, Result};
 use crate::http::{build_client, check, http_url, https_url};
-use crate::model::{BatteryStatus, DeviceInfo, Entry, EntryList, ROOT_FOLDER_ID, StorageStatus};
+use crate::model::{
+    BatteryStatus, DeviceInfo, DeviceSettings, Entry, EntryList, ROOT_FOLDER_ID, StorageStatus, format_utc,
+};
 
 /// 認証不要の端末情報 (`:8080/register/information`) を読み取る。
 pub fn device_information(addr: &DeviceAddress, timeout: Duration) -> Result<DeviceInfo> {
@@ -147,8 +149,41 @@ impl DeviceClient {
     }
 
     pub fn firmware_version(&self) -> Result<String> {
-        let v: Value = self.get_json("/system/status/firmware_version")?;
-        Ok(v.get("value").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| v.to_string()))
+        Ok(value_string(self.get_json("/system/status/firmware_version")?))
+    }
+
+    // ----- 設定 ---------------------------------------------------------
+
+    /// `/system/configs/{key}` の値を読む。
+    pub fn config(&self, key: &str) -> Result<String> {
+        Ok(value_string(self.get_json(&config_api_path(key))?))
+    }
+
+    /// `/system/configs/{key}` に値を書き込む。
+    pub fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        self.send_json(Method::PUT, &config_api_path(key), json!({ "value": value }))?;
+        Ok(())
+    }
+
+    pub fn settings(&self) -> Result<DeviceSettings> {
+        let mut settings = DeviceSettings::default();
+        for (key, value) in DeviceSettings::KEYS.into_iter().zip(settings.values_mut()) {
+            *value = self.config(key)?;
+        }
+        Ok(settings)
+    }
+
+    /// `current` から変わった設定だけを書き込む。
+    pub fn update_settings(&self, current: &DeviceSettings, new: &DeviceSettings) -> Result<()> {
+        for (key, value) in current.changes(new) {
+            self.set_config(key, value)?;
+        }
+        Ok(())
+    }
+
+    /// 端末の時計を `time` に合わせる。
+    pub fn set_datetime(&self, time: SystemTime) -> Result<()> {
+        self.set_config("datetime", &format_utc(time))
     }
 
     // ----- 閲覧 ---------------------------------------------------------
@@ -321,6 +356,19 @@ impl DeviceClient {
     /// ルートフォルダを列挙する (簡便のため)。
     pub fn list_root(&self) -> Result<Vec<Entry>> {
         self.list_folder(ROOT_FOLDER_ID)
+    }
+}
+
+fn config_api_path(key: &str) -> String {
+    format!("/system/configs/{}", urlencoding::encode(key))
+}
+
+/// `{"value": ...}` の形の応答から値を取り出す。文字列でなければ JSON のまま返す。
+fn value_string(v: Value) -> String {
+    match v.get("value") {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => v.to_string(),
     }
 }
 

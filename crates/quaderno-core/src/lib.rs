@@ -23,5 +23,5 @@ pub use client::{DeviceClient, Progress, device_information, no_progress};
 pub use credentials::{CredentialStore, Credentials};
 pub use discovery::{DiscoveredDevice, Transport, discover};
 pub use error::{Error, Result};
-pub use model::{DeviceInfo, Entry, EntryType, ROOT_FOLDER_ID, format_date, format_size};
+pub use model::{DeviceInfo, DeviceSettings, Entry, EntryType, ROOT_FOLDER_ID, format_date, format_size, format_utc};
 pub use register::Registration;
