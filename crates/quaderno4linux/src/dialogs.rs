@@ -1,6 +1,7 @@
-//! 小さなモーダルダイアログ (テキスト入力、確認) と通知。
+//! 小さなモーダルダイアログ (テキスト入力、確認、ライセンス) と通知。
 
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -9,6 +10,7 @@ use gpui_kit::component::button::{Button, ButtonVariant};
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::notification::{Notification, NotificationType};
+use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::{Context, Entity, Focusable, SharedString, Window, prelude::*, px};
 
 use crate::app::QuadernoApp;
@@ -106,6 +108,48 @@ impl QuadernoApp {
         });
     }
 
+    /// アプリのライセンスを表示するダイアログ。依存クレートのライセンス一覧は、パッケージに同梱した
+    /// HTML を既定のアプリで開く。
+    pub fn show_licenses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        window.open_alert_dialog(cx, move |dialog, _, cx| {
+            let view = view.clone();
+            let theme = cx.theme();
+            // LICENSE は 80 桁前後で改行されているので、段落ごとにつなげてダイアログの幅で折り返す。
+            let paragraphs = LICENSE.split("\n\n").map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "));
+            let license = v_flex()
+                .id("license-text")
+                .gap_2()
+                .max_h(px(320.))
+                .overflow_y_scroll()
+                .p_3()
+                .rounded(theme.radius)
+                .border_1()
+                .border_color(theme.border)
+                .text_xs()
+                .children(paragraphs);
+            let third_party =
+                Button::new("third-party-licenses").label("サードパーティのライセンス").small().outline().on_click(
+                    move |_, window, cx| {
+                        view.update(cx, |this, cx| match third_party_licenses_path() {
+                            Some(path) => cx.open_with_system(&path),
+                            None => this.notify_warning(
+                                "サードパーティのライセンス一覧 (THIRD_PARTY_LICENSES.html) が見つかりません",
+                                window,
+                                cx,
+                            ),
+                        })
+                    },
+                );
+            dialog
+                .title("ライセンス")
+                .description(format!("Quaderno4Linux {}", env!("CARGO_PKG_VERSION")))
+                .width(px(560.))
+                .child(v_flex().gap_3().child(license).child(h_flex().child(third_party)))
+                .button_props(DialogButtonProps::default().ok_text("閉じる"))
+        });
+    }
+
     /// エラー通知を表示する。`detail` はログファイルにだけ書き込み、通知からそのログファイルを開け
     /// るようにする。
     pub fn notify_error(
@@ -164,6 +208,22 @@ impl QuadernoApp {
         })
         .detach();
     }
+}
+
+const LICENSE: &str = include_str!("../../../LICENSE");
+
+/// 依存クレートのライセンス一覧。リリースのワークフローが cargo-about で生成し、deb と rpm で別の場所
+/// にインストールする。実行ファイルの隣を先に探し、`target/release` に生成したものも開けるようにする。
+fn third_party_licenses_path() -> Option<PathBuf> {
+    const NAME: &str = "THIRD_PARTY_LICENSES.html";
+    let beside_exe = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join(NAME)));
+    beside_exe
+        .into_iter()
+        .chain(
+            ["/usr/share/licenses/quaderno4linux", "/usr/share/doc/quaderno4linux"]
+                .map(|dir| PathBuf::from(dir).join(NAME)),
+        )
+        .find(|path| path.is_file())
 }
 
 const TOAST_DURATION: Duration = Duration::from_secs(10);
